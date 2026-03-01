@@ -1,0 +1,46 @@
+"""
+Configuration for Sleep Digest Bot.
+All paths, tokens, and timing constants in one place.
+"""
+
+import os
+from pathlib import Path
+from datetime import timezone, timedelta
+
+# --- Timezone ---
+SGT = timezone(timedelta(hours=8))
+
+# --- Telegram ---
+BOT_TOKEN = os.environ.get("DIGEST_BOT_TOKEN", "8324650609:AAGeTNX2TFWB-1ipkFgk3R1LRZw9GoGv4cw")
+BOYANG_USER_ID = 411364623  # Only process messages from Boyang
+
+# --- Paths ---
+VAULT_PATH = Path("/Users/claw/Documents/NotesVault")
+DIGEST_DIR = VAULT_PATH / "Artificial-Colloquia" / "Doudou-Digest"
+SESSION_DIR = Path.home() / ".openclaw" / "agents" / "main" / "sessions"
+SESSIONS_JSON = SESSION_DIR / "sessions.json"
+LOG_PATH = Path("/tmp/digest-bot.log")
+
+# --- Timing ---
+DIGEST_HOUR = 22
+DIGEST_MINUTE = 30
+NUDGE_INTERVAL_MINUTES = 30
+NUDGE_START_HOUR = 22   # Nudging window: 22:30 - 07:00
+NUDGE_START_MINUTE = 30
+NUDGE_END_HOUR = 7
+NUDGE_END_MINUTE = 0
+
+# --- Session display names ---
+GROUP_NAMES = {
+    "-5125187430": "CLAW 003",
+    "-5109089385": "CLAW 008",
+    "-4995445768": "CLAW Group 1",
+    "-5204018860": "CLAW Group 2",
+    "-5129926053": "CLAW Group 3",
+    "-5192299370": "CLAW Group 4",
+    "-4886214955": "CLAW Group 5",
+    "-5062669375": "CLAW Group 6",
+}
+
+# --- Message truncation ---
+MAX_ASSISTANT_LENGTH = 4000  # Truncate Doudou's responses; never truncate Boyang's
