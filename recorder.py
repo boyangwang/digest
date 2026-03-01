@@ -1,22 +1,20 @@
 """
 Recorder — Atomic writes to Obsidian vault with proper YAML handling.
 
+Document format v2 (per SPEC.md):
+  Two sections only: "# Doudou's Summary" + "# Boyang's Recap"
+  No raw conversations (stored in transcripts/)
+  Summary is append-only with Session/Messages/Summary entries
+  Minimal YAML frontmatter (no date/day fields)
+
 State machine:
   IDLE → /digest → create file → ACTIVE
-  ACTIVE → /digest → update same file (extend coverage) → ACTIVE
+  ACTIVE → /digest → append summaries to same file → ACTIVE
   ACTIVE → text → append recap → ACTIVE
   ACTIVE → /sleep → finalize → IDLE
-  IDLE → /digest → new file → ACTIVE
 
 Naming: YYYY-MM-DD-HHMM.md (supports multiple files per day).
 Timestamp chain: each file's coverage_to → next file's coverage_from.
-
-All 5 fixes baked in:
-  1. Atomic writes (.tmp → os.rename)
-  2. YAML parsing (yaml.safe_load between --- delimiters)
-  3. Metadata extraction (handled by collector)
-  4. Recap = code only (append_recap / finalize)
-  5. Self-contained (no external triggers)
 """
 
 import os
@@ -36,12 +34,10 @@ _active_file = None  # Path to the currently active digest file
 
 
 def get_active_file():
-    """Get the currently active (non-finalized) digest file path, or None."""
     return _active_file
 
 
 def has_active_file():
-    """Check if there's an active digest file."""
     return _active_file is not None and _active_file.exists()
 
 
@@ -70,7 +66,7 @@ def _serialize_frontmatter(fm, body):
 
 
 def _atomic_write(filepath, content):
-    """Write atomically: .tmp → os.rename. Fix #1."""
+    """Write atomically: .tmp → os.rename."""
     tmp_path = filepath.with_suffix(".tmp")
     try:
         tmp_path.write_text(content, encoding="utf-8")
@@ -82,13 +78,31 @@ def _atomic_write(filepath, content):
 
 
 # ============================================================
+# Formatting helpers
+# ============================================================
+
+def _format_session_summaries(session_summaries):
+    """Format a list of session summary dicts into markdown.
+
+    Each entry: {"session": str, "messages": int, "summary": str}
+    """
+    parts = []
+    for entry in session_summaries:
+        parts.append(
+            "Session: %s\nMessages: %d\nSummary:\n%s"
+            % (entry["session"], entry["messages"], entry["summary"])
+        )
+    return "\n\n".join(parts)
+
+
+# ============================================================
 # Finding coverage chain
 # ============================================================
 
 def find_latest_coverage_to():
     """Find the most recent coverage_to across all digest files.
-    
-    Scans all files, not just today's — the chain is date-independent.
+
+    Scans all files — the chain is date-independent.
     Returns datetime or None.
     """
     DIGEST_DIR.mkdir(parents=True, exist_ok=True)
@@ -111,16 +125,12 @@ def find_latest_coverage_to():
 # Core operations
 # ============================================================
 
-def create_digest(
-    coverage_from,
-    coverage_to,
-    previous_night_sections,
-    today_sections,
-    summary,
-):
+def create_digest(coverage_from, coverage_to, session_summaries):
     """Create a new digest file. Returns the filepath.
-    
+
     Called when /digest is issued in IDLE state.
+
+    session_summaries: list of {"session": str, "messages": int, "summary": str}
     """
     global _active_file
     DIGEST_DIR.mkdir(parents=True, exist_ok=True)
@@ -128,44 +138,25 @@ def create_digest(
     now = datetime.now(SGT)
     date_str = now.strftime("%Y-%m-%d")
     time_str = now.strftime("%H%M")
-    day_name = now.strftime("%A")
-    display_date = now.strftime("%B %-d, %Y")
     filename = "%s-%s.md" % (date_str, time_str)
 
-    content = """---
-date: "%s"
-day: "%s"
-generated_at: "%s"
-coverage_from: "%s"
-coverage_to: "%s"
-status: "active"
----
+    summaries_text = _format_session_summaries(session_summaries)
 
-# %s — %s
-
-## 🌙 Summary
-
-%s
-
-## 🌃 Previous Night
-
-%s
-
-## 🗣️ Today's Conversations
-
-%s
-
-## 📝 Boyang's Recap
-
-""" % (
-        date_str, day_name,
+    content = (
+        '---\n'
+        'generated_at: "%s"\n'
+        'coverage_from: "%s"\n'
+        'coverage_to: "%s"\n'
+        'status: "active"\n'
+        '---\n\n'
+        '# Doudou\'s Summary\n\n'
+        '%s\n\n'
+        '# Boyang\'s Recap\n\n'
+    ) % (
         coverage_to.isoformat(),
         coverage_from.isoformat(),
         coverage_to.isoformat(),
-        display_date, day_name,
-        summary,
-        previous_night_sections,
-        today_sections,
+        summaries_text,
     )
 
     filepath = DIGEST_DIR / filename
@@ -174,18 +165,19 @@ status: "active"
     return filepath
 
 
-def update_digest(
-    new_coverage_to,
-    new_sections_text,
-    new_summary,
-):
-    """Update the active digest with new conversations. Extends coverage.
-    
+def update_digest(new_coverage_to, session_summaries):
+    """Append new session summaries to the active digest. Extends coverage.
+
     Called when /digest is issued in ACTIVE state.
-    Returns True on success.
+    Summary is APPEND-ONLY — previous entries are never modified.
+
+    Returns True on success, False if no active file or empty summaries.
     """
     global _active_file
     if not has_active_file():
+        return False
+
+    if not session_summaries:
         return False
 
     try:
@@ -195,26 +187,17 @@ def update_digest(
         # Advance coverage_to
         fm["coverage_to"] = new_coverage_to.isoformat()
 
-        # Append new conversations before the recap section
-        recap_marker = "## 📝 Boyang's Recap"
+        # Format new summary entries
+        new_text = _format_session_summaries(session_summaries)
+
+        # Append before "# Boyang's Recap" (which is always last)
+        recap_marker = "# Boyang's Recap"
         if recap_marker in body:
             before_recap, after_recap = body.split(recap_marker, 1)
-            # Add new conversations
-            before_recap = before_recap.rstrip() + "\n\n## 🗣️ New Conversations (updated)\n\n" + new_sections_text + "\n\n"
-            body = before_recap + recap_marker + after_recap
+            body = before_recap.rstrip() + "\n\n" + new_text + "\n\n" + recap_marker + after_recap
         else:
-            body = body.rstrip() + "\n\n## 🗣️ New Conversations (updated)\n\n" + new_sections_text + "\n"
-
-        # Update summary
-        if new_summary:
-            summary_marker = "## 🌙 Summary"
-            if summary_marker in body:
-                parts = body.split(summary_marker, 1)
-                # Find the next ## heading after summary
-                rest = parts[1]
-                next_heading = rest.find("\n## ")
-                if next_heading > 0:
-                    body = parts[0] + summary_marker + "\n\n" + new_summary + "\n" + rest[next_heading:]
+            # Safety: if marker missing, append at end
+            body = body.rstrip() + "\n\n" + new_text + "\n"
 
         new_content = _serialize_frontmatter(fm, body)
         _atomic_write(_active_file, new_content)
@@ -224,8 +207,8 @@ def update_digest(
 
 
 def append_recap(text):
-    """Append Boyang's text verbatim to the active digest. Fix #4.
-    
+    """Append Boyang's text verbatim to the active digest.
+
     Returns True on success, False if no active file.
     """
     if not has_active_file():
@@ -251,7 +234,7 @@ def append_recap(text):
 
 def finalize():
     """Finalize the active digest (/sleep received).
-    
+
     Sets status to 'final', records timestamp. Returns True on success.
     """
     global _active_file
@@ -267,14 +250,18 @@ def finalize():
 
         new_content = _serialize_frontmatter(fm, body)
         _atomic_write(_active_file, new_content)
-        _active_file = None  # Clear active — back to IDLE
+        _active_file = None
         return True
     except Exception:
         return False
 
 
 def get_active_status():
-    """Get status info for /status command."""
+    """Get status info for /status command.
+
+    SPEC-STATUS-01: Returns metadata (state, file, timestamps)
+    AND the full raw document content.
+    """
     if not has_active_file():
         return {"state": "IDLE", "file": None}
 
@@ -287,6 +274,7 @@ def get_active_status():
             "coverage_from": fm.get("coverage_from", "?"),
             "coverage_to": fm.get("coverage_to", "?"),
             "status": fm.get("status", "?"),
+            "content": content,
         }
     except Exception:
         return {"state": "ACTIVE", "file": _active_file.name}
@@ -294,7 +282,7 @@ def get_active_status():
 
 def recover_active_on_startup():
     """On bot startup, check if there's an unfinalized digest to resume.
-    
+
     Scans for any file with status != 'final'. Resumes the most recent one.
     """
     global _active_file
