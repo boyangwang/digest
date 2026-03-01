@@ -280,19 +280,11 @@ def get_active_status():
         return {"state": "ACTIVE", "file": _active_file.name}
 
 
-def _is_v2_format(content):
-    """Check if a digest file is in v2 format.
-
-    v2 has "# Doudou's Summary" and no v1 artifacts like "Previous Night".
-    """
-    return "# Doudou's Summary" in content and "Previous Night" not in content
-
-
 def recover_active_on_startup():
-    """On bot startup, check if there's an unfinalized v2 digest to resume.
+    """On bot startup, check if there's an unfinalized digest to resume.
 
-    Scans for files with status='active'. Only recovers v2-format files.
-    v1-format active files are auto-finalized (they're incompatible).
+    Scans for files with status='active'. Resumes the most recent one.
+    v1 files have been moved to archive-v1/ — only v2 files exist here.
     """
     global _active_file
     DIGEST_DIR.mkdir(parents=True, exist_ok=True)
@@ -303,16 +295,8 @@ def recover_active_on_startup():
     for f in sorted(DIGEST_DIR.glob("*.md"), reverse=True):
         try:
             content = f.read_text()
-            fm, body = _parse_frontmatter(content)
+            fm, _ = _parse_frontmatter(content)
             if fm.get("status") in ("active", "draft"):
-                if not _is_v2_format(content):
-                    # Auto-finalize v1 files — incompatible with v2
-                    fm["status"] = "final"
-                    fm["finalized_at"] = datetime.now(SGT).isoformat()
-                    fm["migration_note"] = "auto-finalized by v2 migration"
-                    _atomic_write(f, _serialize_frontmatter(fm, body))
-                    continue
-
                 gen_str = fm.get("generated_at", "")
                 if gen_str:
                     gen_time = datetime.fromisoformat(str(gen_str))

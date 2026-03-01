@@ -34,62 +34,23 @@ def _reset():
 # v1 → v2 migration: old active files
 # ============================================================
 
-class TestV1Migration:
-    """Old v1 format files should NOT be recovered as active.
-
-    The old format has: date, day, Previous Night, Today's Conversations,
-    raw message dumps. These are incompatible with v2.
+class TestCleanSlate:
+    """Digest directory should only contain v2 files.
+    v1 files have been moved to archive-v1/.
     """
 
     def setup_method(self):
         _reset()
 
-    def test_v1_active_file_not_recovered(self, digest_dir):
-        """A v1-format active file should be auto-finalized, not recovered."""
-        v1_content = """---
-date: "2026-03-01"
-day: "Saturday"
-generated_at: "2026-03-01T15:52:00+08:00"
-coverage_from: "2026-02-28T22:30:00+08:00"
-coverage_to: "2026-03-01T18:25:00+08:00"
-status: "active"
----
-
-# March 1, 2026 — Saturday
-
-## 🌙 Summary
-
-A long summary here.
-
-## 🌃 Previous Night
-
-_No late-night conversations._
-
-## 🗣️ Today's Conversations
-
-### CLAW 003
-
-**09:00** **Boyang:**
-lots of raw messages here...
-
-## 📝 Boyang's Recap
-
-"""
-        (digest_dir / "2026-03-01-1552.md").write_text(v1_content)
-
+    def test_empty_dir_starts_idle(self, digest_dir):
+        """Empty directory → IDLE, no recovery."""
         with patch.object(recorder, "DIGEST_DIR", digest_dir):
             result = recorder.recover_active_on_startup()
-
-        # v1 file should either not be recovered, or be auto-finalized
-        if result is not None:
-            # If recovered, it should have been migrated to v2 or finalized
-            content = result.read_text()
-            fm, _ = recorder._parse_frontmatter(content)
-            # It should NOT be left as active in v1 format
-            assert "Previous Night" not in content or fm.get("status") == "final"
+        assert result is None
+        assert not recorder.has_active_file()
 
     def test_v2_active_file_recovered(self, digest_dir):
-        """A v2-format active file SHOULD be recovered."""
+        """A v2-format active file is recovered on startup."""
         v2_content = """---
 generated_at: "2026-03-01T22:30:00+08:00"
 coverage_from: "2026-02-28T22:30:00+08:00"
@@ -114,6 +75,32 @@ A good day of work.
 
         assert result is not None
         assert recorder.has_active_file()
+
+    def test_finalized_not_recovered(self, digest_dir):
+        """Finalized files are not recovered."""
+        final_content = """---
+generated_at: "2026-03-01T22:30:00+08:00"
+coverage_from: "2026-02-28T22:30:00+08:00"
+coverage_to: "2026-03-01T22:30:00+08:00"
+status: "final"
+finalized_at: "2026-03-01T23:00:00+08:00"
+---
+
+# Doudou's Summary
+
+Session: CLAW 003
+Messages: 50
+Summary:
+Done.
+
+# Boyang's Recap
+
+"""
+        (digest_dir / "2026-03-01-2230.md").write_text(final_content)
+
+        with patch.object(recorder, "DIGEST_DIR", digest_dir):
+            result = recorder.recover_active_on_startup()
+        assert result is None
 
 
 # ============================================================
