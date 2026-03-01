@@ -141,3 +141,94 @@ No `date`, `day` fields — document is not date-oriented.
 
 ### SPEC-NUDGE: Window 22:30–07:00
 Unchanged from v1. See test_nudge_bug.py.
+
+---
+
+## Voice Message Handling (v2.1)
+
+When Boyang sends a voice or audio message to the bot, it is processed as a
+first-class entry in the digest — audio preserved in full, transcript alongside.
+
+### SPEC-VOICE-01: Audio file saved to Obsidian vault
+The original audio file is saved to:
+```
+Doudou-Digest/attachments/voice-YYYYMMDD-HHMMSS.ogg
+```
+- Filename uses UTC+8 timestamp of receipt
+- Format preserved as-is from Telegram (.ogg opus)
+- The `attachments/` directory is created if absent
+- Files are synced to all devices via Obsidian Sync
+
+### SPEC-VOICE-02: STT transcription via ElevenLabs Scribe
+The audio file is transcribed using ElevenLabs Scribe v2 API:
+- Endpoint: `POST https://api.elevenlabs.io/v1/speech-to-text`
+- Model: `scribe_v2`
+- Language detection: automatic (supports Chinese + English bilingual)
+- API key: `ELEVENLABS_API_KEY` environment variable
+- On STT failure: audio is still saved, transcript shows `[Transcription unavailable]`
+
+### SPEC-VOICE-03: Recap entry format (audio + transcript)
+Under `# Boyang's Recap`, a voice message produces:
+```
+**HH:MM** 🎙️ ![[voice-20260301-223045.ogg]]
+> Transcribed text goes here, exactly as returned by STT...
+```
+- The `![[...]]` embed renders as an audio player in Obsidian
+- The blockquote `>` contains the full transcription
+- Multi-line transcriptions use continued `>` blockquote syntax
+- This mirrors messaging apps: audio player + text side by side
+
+### SPEC-VOICE-04: Telegram confirmation
+After processing, the bot replies in DM with:
+```
+🎙️ ✍️
+
+> <transcribed text>
+```
+- The transcription is shown so Boyang can verify accuracy
+- If STT failed: `🎙️ ✍️ (audio saved, transcription unavailable)`
+
+### SPEC-VOICE-05: Voice messages require ACTIVE state
+Voice messages are only processed when a digest is active.
+If no active digest, the voice message is silently ignored (same as text).
+
+### SPEC-VOICE-06: Audio stored in vault, not /tmp/
+Audio files are stored in the Obsidian vault (permanent, synced).
+NOT in `/tmp/` (which is ephemeral). This matches the transcript storage
+pattern (`transcripts/` directory).
+
+### SPEC-VOICE-07: STT provider abstraction
+The STT call is isolated in `stt.py` — a single function:
+```python
+def transcribe(audio_path: str) -> str | None
+```
+Returns transcribed text, or None on failure.
+Provider can be swapped without touching any other module.
+
+### Example: Full digest with voice
+
+```markdown
+---
+generated_at: "2026-03-01T22:30:00+08:00"
+coverage_from: "2026-03-01T10:00:00+08:00"
+coverage_to: "2026-03-01T22:30:00+08:00"
+status: "active"
+---
+
+# Doudou's Summary
+
+Session: CLAW 003
+Messages: 42
+Summary:
+Worked on the digest bot voice feature...
+今天在搞语音消息功能...
+
+# Boyang's Recap
+
+**22:45** Great progress today on the bot
+
+**22:50** 🎙️ ![[voice-20260301-225012.ogg]]
+> 今天的进展很不错，明天继续把测试写完。晚安。
+
+**23:01** One more thought before sleep
+```
