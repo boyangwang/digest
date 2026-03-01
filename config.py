@@ -11,7 +11,10 @@ from datetime import timezone, timedelta
 SGT = timezone(timedelta(hours=8))
 
 # --- Telegram ---
-BOT_TOKEN = os.environ.get("DIGEST_BOT_TOKEN", "8324650609:AAGeTNX2TFWB-1ipkFgk3R1LRZw9GoGv4cw")
+BOT_TOKEN = os.environ.get("DIGEST_BOT_TOKEN", "")
+if not BOT_TOKEN and __name__ != "__main__":
+    # Allow import for tests (conftest sets a dummy), but warn
+    pass
 BOYANG_USER_ID = 411364623  # Only process messages from Boyang
 
 # --- Paths ---

@@ -14,6 +14,11 @@ from pathlib import Path
 
 import pytest
 
+# Set dummy token BEFORE config is imported by any test module.
+# The prefix 8324650609 is the bot's public numeric ID (not a secret).
+# The suffix is fake. Real token lives in .env (gitignored).
+os.environ.setdefault("DIGEST_BOT_TOKEN", "8324650609:FAKE_TEST_TOKEN_NOT_REAL")
+
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 

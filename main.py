@@ -14,8 +14,19 @@ Timestamp chain unbroken across files.
 """
 
 import logging
+import os
 import sys
 from datetime import datetime, timedelta
+from pathlib import Path
+
+# Load .env file if present (for local development)
+_env_file = Path(__file__).parent / ".env"
+if _env_file.exists():
+    for line in _env_file.read_text().splitlines():
+        line = line.strip()
+        if line and not line.startswith("#") and "=" in line:
+            key, _, value = line.partition("=")
+            os.environ.setdefault(key.strip(), value.strip())
 
 from telegram import Update
 from telegram.ext import (
@@ -27,6 +38,10 @@ from telegram.ext import (
 )
 
 from config import BOT_TOKEN, BOYANG_USER_ID, SGT, DIGEST_DIR
+
+if not BOT_TOKEN:
+    print("FATAL: DIGEST_BOT_TOKEN not set. Set it in .env or environment.", file=sys.stderr)
+    sys.exit(1)
 from collector import (
     collect_all_messages,
     format_messages,
