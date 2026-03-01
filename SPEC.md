@@ -108,13 +108,18 @@ Decoupled from calendar date. Multiple files per day supported.
 ### SPEC-NAME-02: New file only from IDLE
 New file created only when `/digest` is called in IDLE state.
 
-### SPEC-STATUS-01: /status returns full document
-`/status` returns the complete content of the active document,
-not just metadata. If it exceeds Telegram's limit, split into
-multiple messages.
+### SPEC-STATUS-01: /status returns metadata + full document
+`/status` returns:
+1. State (ACTIVE / IDLE)
+2. File name
+3. Timestamps (coverage_from, coverage_to)
+4. The full raw content of the active document
+
+All metadata is preserved. The document content is appended at the end.
+If it exceeds Telegram's limit, split into multiple messages.
 
 ### SPEC-STATUS-02: /status when IDLE
-Shows IDLE state and last finalized file's `coverage_to`.
+Shows IDLE state and file=None. No document content.
 
 ### SPEC-FINAL-01: /sleep finalizes
 Sets `status: "final"`, `finalized_at`, clears active state, stops nudging.

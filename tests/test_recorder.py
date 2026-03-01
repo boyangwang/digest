@@ -543,8 +543,8 @@ class TestGetActiveStatus:
     def setup_method(self):
         _reset_active()
 
-    def test_active_returns_full_content(self, digest_dir):
-        """SPEC-STATUS-01: Full document content returned."""
+    def test_active_returns_metadata(self, digest_dir):
+        """Status includes file name, timestamps, and state."""
         now = datetime.now(SGT)
         with _patch_digest_dir(digest_dir):
             fp = recorder.create_digest(
@@ -556,13 +556,41 @@ class TestGetActiveStatus:
             )
             status = recorder.get_active_status()
         assert status["state"] == "ACTIVE"
+        assert status["file"] == fp.name
+        assert "coverage_from" in status
+        assert "coverage_to" in status
+
+    def test_active_returns_full_content(self, digest_dir):
+        """SPEC-STATUS-01: Full raw document content included."""
+        now = datetime.now(SGT)
+        with _patch_digest_dir(digest_dir):
+            fp = recorder.create_digest(
+                coverage_from=now - timedelta(hours=24),
+                coverage_to=now,
+                session_summaries=_make_session_summaries([
+                    ("CLAW 003", 50, "The full summary text."),
+                ]),
+            )
+            status = recorder.get_active_status()
         assert "content" in status
         assert "The full summary text." in status["content"]
         assert "# Doudou's Summary" in status["content"]
         assert "# Boyang's Recap" in status["content"]
 
-    def test_idle_shows_last_coverage(self, digest_dir):
-        """SPEC-STATUS-02."""
+    def test_active_content_is_complete_file(self, digest_dir):
+        """Content should be the entire file, including YAML frontmatter."""
+        now = datetime.now(SGT)
+        with _patch_digest_dir(digest_dir):
+            fp = recorder.create_digest(
+                coverage_from=now - timedelta(hours=24),
+                coverage_to=now,
+                session_summaries=_make_session_summaries([("S", 1, "Sum.")]),
+            )
+            status = recorder.get_active_status()
+        assert status["content"] == fp.read_text()
+
+    def test_idle_shows_state_and_no_content(self, digest_dir):
+        """SPEC-STATUS-02: IDLE shows state, no content."""
         now = datetime.now(SGT)
         with _patch_digest_dir(digest_dir):
             recorder.create_digest(
@@ -574,6 +602,7 @@ class TestGetActiveStatus:
             status = recorder.get_active_status()
         assert status["state"] == "IDLE"
         assert status["file"] is None
+        assert "content" not in status or status.get("content") is None
 
 
 # ============================================================
