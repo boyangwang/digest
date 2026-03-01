@@ -38,7 +38,7 @@ from telegram.ext import (
     filters,
 )
 
-from config import BOT_TOKEN, BOYANG_USER_ID, SGT
+from config import BOT_TOKEN, BOYANG_USER_ID, SGT, ATTACHMENTS_DIR
 
 if not BOT_TOKEN:
     print("FATAL: DIGEST_BOT_TOKEN not set. Set it in .env or environment.", file=sys.stderr)
@@ -50,6 +50,7 @@ from recorder import (
     create_digest,
     update_digest,
     append_recap,
+    append_voice_recap,
     finalize,
     has_active_file,
     get_active_status,
@@ -57,6 +58,7 @@ from recorder import (
 )
 from scheduler import DigestScheduler
 from llm import compose_summary, compose_nudge
+from stt import transcribe
 
 # --- Logging ---
 logging.basicConfig(
@@ -281,10 +283,47 @@ async def handle_text(update, context):
 
 
 async def handle_voice(update, context):
+    """SPEC-VOICE-01..05: Download audio, save to vault, transcribe, record."""
     if not has_active_file():
         return
-    append_recap("[Voice message received]")
-    await update.message.reply_text("🎙️ ✍️")
+
+    try:
+        # 1. Get the voice/audio file from Telegram
+        voice = update.message.voice or update.message.audio
+        if not voice:
+            return
+
+        file = await context.bot.get_file(voice.file_id)
+
+        # 2. Save to Obsidian vault attachments (SPEC-VOICE-01, SPEC-VOICE-06)
+        ATTACHMENTS_DIR.mkdir(parents=True, exist_ok=True)
+        now = datetime.now(SGT)
+        audio_filename = "voice-%s.ogg" % now.strftime("%Y%m%d-%H%M%S")
+        audio_path = ATTACHMENTS_DIR / audio_filename
+
+        await file.download_to_drive(str(audio_path))
+        logger.info("Saved voice: %s (%d bytes)" % (audio_filename, audio_path.stat().st_size))
+
+        # 3. Transcribe via ElevenLabs Scribe (SPEC-VOICE-02)
+        transcript = transcribe(str(audio_path))
+        if transcript:
+            logger.info("Transcribed: %d chars" % len(transcript))
+        else:
+            logger.warning("Transcription failed for %s" % audio_filename)
+
+        # 4. Record in digest (SPEC-VOICE-03)
+        append_voice_recap(audio_filename, transcript)
+
+        # 5. Reply with transcription (SPEC-VOICE-04)
+        if transcript:
+            reply = "🎙️ ✍️\n\n> %s" % transcript
+        else:
+            reply = "🎙️ ✍️ (audio saved, transcription unavailable)"
+        await update.message.reply_text(reply)
+
+    except Exception as e:
+        logger.error("Voice handling error: %s" % e)
+        await update.message.reply_text("🎙️ ❌ Error processing voice message")
 
 
 async def handle_photo(update, context):

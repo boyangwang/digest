@@ -232,6 +232,44 @@ def append_recap(text):
         return False
 
 
+def append_voice_recap(audio_filename, transcript):
+    """Append a voice message entry to the active digest (SPEC-VOICE-03).
+
+    Format:
+      **HH:MM** 🎙️ ![[voice-YYYYMMDD-HHMMSS.ogg]]
+      > Transcribed text here...
+
+    If transcript is None, uses "[Transcription unavailable]".
+    Returns True on success, False if no active file.
+    """
+    if not has_active_file():
+        return False
+
+    try:
+        content = _active_file.read_text(encoding="utf-8")
+        fm, body = _parse_frontmatter(content)
+
+        now = datetime.now(SGT)
+        time_str = now.strftime("%H:%M")
+        fallback = "[Transcription unavailable]"
+        text = transcript or fallback
+
+        # Build blockquote: each line prefixed with >
+        blockquote_lines = ["> %s" % line for line in text.split("\n")]
+        blockquote = "\n".join(blockquote_lines)
+
+        entry = "\n**%s** 🎙️ ![[%s]]\n%s\n" % (time_str, audio_filename, blockquote)
+
+        # Append at end (recap is last section)
+        body = body.rstrip() + "\n" + entry
+
+        new_content = _serialize_frontmatter(fm, body)
+        _atomic_write(_active_file, new_content)
+        return True
+    except Exception:
+        return False
+
+
 def finalize():
     """Finalize the active digest (/sleep received).
 

@@ -20,6 +20,7 @@ BOYANG_USER_ID = 411364623  # Only process messages from Boyang
 # --- Paths ---
 VAULT_PATH = Path("/Users/claw/Documents/NotesVault")
 DIGEST_DIR = VAULT_PATH / "Artificial-Colloquia" / "Doudou-Digest"
+ATTACHMENTS_DIR = DIGEST_DIR / "attachments"
 SESSION_DIR = Path.home() / ".openclaw" / "agents" / "main" / "sessions"
 SESSIONS_JSON = SESSION_DIR / "sessions.json"
 LOG_PATH = Path("/tmp/digest-bot.log")
