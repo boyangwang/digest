@@ -19,12 +19,11 @@ from config import (
     SGT,
     DIGEST_HOUR, DIGEST_MINUTE,
     NUDGE_INTERVAL_MINUTES,
+    NUDGE_START_HOUR, NUDGE_START_MINUTE,
+    NUDGE_END_HOUR, NUDGE_END_MINUTE,
 )
 
 logger = logging.getLogger("digest-bot.scheduler")
-
-
-NUDGE_SAFETY_TIMEOUT_HOURS = 10  # Auto-stop nudging after this many hours
 
 
 class DigestScheduler:
@@ -34,7 +33,6 @@ class DigestScheduler:
         self.scheduler = AsyncIOScheduler(timezone=SGT)
         self._sleep_received = False
         self._digest_generated = False
-        self._digest_generated_at = None  # Track when digest was generated for safety timeout
         self._today: str = ""
         self._on_digest_callback = None
         self._on_nudge_callback = None
@@ -51,7 +49,6 @@ class DigestScheduler:
             self._today = today
             self._sleep_received = False
             self._digest_generated = False
-            self._digest_generated_at = None
             logger.info(f"New day: {today}. State reset.")
 
     async def _digest_job(self):
@@ -66,22 +63,31 @@ class DigestScheduler:
             await self._on_digest_callback()
 
     async def _nudge_job(self):
-        """Triggered every 30 min. Gates: digest active, no sleep, within safety timeout."""
+        """Triggered every 30 min during nudge window."""
         self._reset_if_new_day()
 
         if self._sleep_received:
+            logger.info("Sleep received. Skipping nudge.")
             return
 
         if not self._digest_generated:
+            logger.info("Digest not yet generated. Skipping nudge.")
             return
 
-        # Safety timeout: stop nudging after N hours to prevent infinite nudges
+        # Check if within nudge window (22:30 - 07:00)
         now = datetime.now(SGT)
-        if self._digest_generated_at:
-            elapsed = (now - self._digest_generated_at).total_seconds() / 3600
-            if elapsed > NUDGE_SAFETY_TIMEOUT_HOURS:
-                logger.info(f"Safety timeout: digest active for {elapsed:.1f}h. Stopping nudges.")
-                return
+        h, m = now.hour, now.minute
+        in_window = False
+        if h >= 23 or h < NUDGE_END_HOUR:
+            in_window = True
+        elif h == NUDGE_START_HOUR and m >= NUDGE_START_MINUTE:
+            in_window = True
+        elif h == NUDGE_END_HOUR and m <= NUDGE_END_MINUTE:
+            in_window = True
+
+        if not in_window:
+            logger.info(f"Outside nudge window ({h:02d}:{m:02d}). Skipping.")
+            return
 
         logger.info("Nudge job triggered.")
         if self._on_nudge_callback:
@@ -95,7 +101,6 @@ class DigestScheduler:
     def mark_digest_generated(self):
         """Called after successful digest generation."""
         self._digest_generated = True
-        self._digest_generated_at = datetime.now(SGT)
 
     @property
     def sleep_received(self) -> bool:
@@ -115,13 +120,13 @@ class DigestScheduler:
             replace_existing=True,
         )
 
-        # Nudge every 30 min at ALL hours. Gating is purely state-based:
-        # _digest_generated, _sleep_received, safety timeout.
-        # Bug fix: previously restricted to hours 22-7, breaking manual /digest.
+        # Nudge every 30 min (22:00 - 07:00 range, actual window checked in job)
+        # Using cron: minute=0,30 hour=22,23,0,1,2,3,4,5,6,7
         self.scheduler.add_job(
             self._nudge_job,
             CronTrigger(
                 minute=f"0,{NUDGE_INTERVAL_MINUTES}",
+                hour="22,23,0,1,2,3,4,5,6,7",
                 timezone=SGT,
             ),
             id="nudge",

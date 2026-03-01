@@ -10,7 +10,7 @@ Tests cover:
 """
 
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -140,16 +140,16 @@ class TestNudgeJob:
         mock_cb.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_nudge_fires_when_digest_active(self):
-        """Nudge should fire at any time when: digest generated, no sleep."""
+    async def test_nudge_fires_in_window(self):
+        """Nudge should fire when: digest generated, no sleep, within 22:30-07:00."""
         s = DigestScheduler()
         mock_cb = AsyncMock()
         s._on_nudge_callback = mock_cb
         s._today = datetime.now(SGT).strftime("%Y-%m-%d")
         s._digest_generated = True
-        s._digest_generated_at = datetime.now(SGT) - timedelta(hours=1)
         s._sleep_received = False
 
+        # Mock time to 23:30 (within window)
         mock_now = datetime.now(SGT).replace(hour=23, minute=30)
         with patch("scheduler.datetime") as mock_dt:
             mock_dt.now.return_value = mock_now
@@ -159,20 +159,20 @@ class TestNudgeJob:
         mock_cb.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_nudge_fires_during_daytime(self):
-        """After manual /digest, nudge fires even during daytime (Bug #1 fix)."""
+    async def test_nudge_skips_outside_window(self):
+        """Nudge should NOT fire during daytime (e.g., 14:00)."""
         s = DigestScheduler()
         mock_cb = AsyncMock()
         s._on_nudge_callback = mock_cb
         s._today = datetime.now(SGT).strftime("%Y-%m-%d")
         s._digest_generated = True
-        s._digest_generated_at = datetime.now(SGT) - timedelta(hours=1)
         s._sleep_received = False
 
+        # Mock time to 14:00 (outside window)
         mock_now = datetime.now(SGT).replace(hour=14, minute=0)
         with patch("scheduler.datetime") as mock_dt:
             mock_dt.now.return_value = mock_now
             mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
             await s._nudge_job()
 
-        mock_cb.assert_called_once()
+        mock_cb.assert_not_called()

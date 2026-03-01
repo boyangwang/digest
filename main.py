@@ -338,7 +338,6 @@ async def post_init(application):
     recovered = recover_active_on_startup()
     if recovered:
         logger.info("Recovered active digest: %s" % recovered.name)
-        _scheduler.mark_digest_generated()  # Resume nudging after crash recovery
 
     _scheduler.set_callbacks(on_digest=generate_digest, on_nudge=do_nudge)
     _scheduler.start()
