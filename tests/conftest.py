@@ -159,47 +159,30 @@ def populated_transcripts(transcript_dir, sample_sessions_json):
 
 @pytest.fixture
 def sample_digest_content():
-    """A well-formed digest file content for testing."""
+    """A well-formed v2 digest file content for testing."""
     return """---
-date: "2026-03-01"
-day: "Saturday"
 generated_at: "2026-03-01T22:30:00+08:00"
 coverage_from: "2026-02-28T22:30:00+08:00"
 coverage_to: "2026-03-01T22:30:00+08:00"
 status: "active"
 ---
 
-# March 1, 2026 — Saturday
+# Doudou's Summary
 
-## 🌙 Summary
-
+Session: CLAW 003
+Messages: 50
+Summary:
 A productive day of building the sleep digest bot.
 
-## 🌃 Previous Night
-
-_No late-night conversations._
-
-## 🗣️ Today's Conversations
-
-### CLAW 003
-
-**09:00** **Boyang:**
-How's the progress?
-
-**09:05** **Doudou:**
-Good progress. The collector is working.
-
-## 📝 Boyang's Recap
+# Boyang's Recap
 
 """
 
 
 @pytest.fixture
 def finalized_digest_content():
-    """A finalized digest file content."""
+    """A finalized v2 digest file content."""
     return """---
-date: "2026-02-28"
-day: "Friday"
 generated_at: "2026-02-28T22:30:00+08:00"
 coverage_from: "2026-02-27T22:30:00+08:00"
 coverage_to: "2026-02-28T22:30:00+08:00"
@@ -207,13 +190,14 @@ status: "final"
 finalized_at: "2026-02-28T23:15:00+08:00"
 ---
 
-# February 28, 2026 — Friday
+# Doudou's Summary
 
-## 🌙 Summary
-
+Session: CLAW 003
+Messages: 20
+Summary:
 A quiet evening.
 
-## 📝 Boyang's Recap
+# Boyang's Recap
 
 Goodnight.
 """

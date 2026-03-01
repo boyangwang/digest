@@ -88,9 +88,8 @@ class TestEndToEnd:
     def setup_method(self):
         recorder._active_file = None
 
-    def test_collect_format_summarize_record(self, tmp_path):
-        """Full pipeline: collect messages → format → summarize → write to vault."""
-        # Setup mock sessions
+    def test_collect_summarize_record(self, tmp_path):
+        """Full pipeline: collect messages → summarize → write to vault (v2 format)."""
         sessions_dir = tmp_path / "sessions"
         sessions_dir.mkdir()
         digest_dir = tmp_path / "digest"
@@ -99,7 +98,6 @@ class TestEndToEnd:
         now = datetime.now(SGT)
         today_9am = now.replace(hour=9, minute=0, second=0, microsecond=0)
 
-        # Create session data
         sessions = {
             "agent:main:telegram:group:-5125187430": {
                 "sessionId": "sess-001",
@@ -121,35 +119,31 @@ class TestEndToEnd:
 
         assert len(today_msgs) == 2
 
-        # Format
-        today_text = ""
-        for sess_name, msgs in collector.group_by_session(today_msgs).items():
-            today_text += "### %s\n\n%s\n" % (sess_name, collector.format_messages(msgs))
-
-        assert "What's the plan?" in today_text
-
         # Summarize (mock Doudou)
         with patch.object(llm, "CONV_DUMP_DIR", str(tmp_path / "transcripts")), \
-             patch.object(llm, "_ask_doudou", return_value="A productive planning session.\n\n高效的规划讨论。"):
-            summary = llm.compose_summary(today_text)
+             patch.object(llm, "_ask_doudou", return_value="A productive planning session."):
+            summary = llm.compose_summary("formatted conversations")
 
-        assert "productive" in summary
-
-        # Record
+        # Record (v2 format — session summaries, no raw conversations)
+        session_summaries = [
+            {"session": "CLAW 003", "messages": 2, "summary": summary},
+        ]
         with patch.object(recorder, "DIGEST_DIR", digest_dir):
             filepath = recorder.create_digest(
                 coverage_from=now.replace(hour=0, minute=0),
                 coverage_to=now,
-                previous_night_sections="_No late-night conversations._\n",
-                today_sections=today_text,
-                summary=summary,
+                session_summaries=session_summaries,
             )
 
-        # Verify final file
         content = filepath.read_text()
         assert "productive" in content
-        assert "What's the plan?" in content
-        assert "## 🌙 Summary" in content
+        assert "Session: CLAW 003" in content
+        assert "Messages: 2" in content
+        assert "# Doudou's Summary" in content
+        assert "# Boyang's Recap" in content
+        # v2: NO raw conversations in digest file
+        assert "What's the plan?" not in content
+        assert "Previous Night" not in content
         fm, _ = recorder._parse_frontmatter(content)
         assert fm["status"] == "active"
 
@@ -192,7 +186,7 @@ class TestEndToEnd:
         assert len(today[0]["text"]) == 10000  # Full, untruncated
 
     def test_full_lifecycle_with_recap(self, tmp_path):
-        """IDLE → /digest → text (recap) → /digest (update) → /sleep → IDLE."""
+        """IDLE → /digest → text (recap) → /digest (update) → /sleep → IDLE (v2)."""
         digest_dir = tmp_path / "digest"
         digest_dir.mkdir()
         now = datetime.now(SGT)
@@ -204,9 +198,9 @@ class TestEndToEnd:
             f1 = recorder.create_digest(
                 coverage_from=now - timedelta(hours=24),
                 coverage_to=now,
-                previous_night_sections="Night",
-                today_sections="Day",
-                summary="Summary v1",
+                session_summaries=[
+                    {"session": "CLAW 003", "messages": 100, "summary": "Big batch."},
+                ],
             )
             assert recorder.has_active_file()
 
@@ -215,14 +209,16 @@ class TestEndToEnd:
             content = f1.read_text()
             assert "Feeling good tonight" in content
 
-            # /digest again (ACTIVE → ACTIVE with update)
+            # /digest again (ACTIVE → ACTIVE with update, append-only)
             recorder.update_digest(
                 new_coverage_to=now + timedelta(minutes=30),
-                new_sections_text="More conversations",
-                new_summary="Summary v2",
+                session_summaries=[
+                    {"session": "CLAW 003", "messages": 5, "summary": "Small update."},
+                ],
             )
             content = f1.read_text()
-            assert "More conversations" in content
+            assert "Big batch." in content  # original preserved
+            assert "Small update." in content  # new appended
 
             # /sleep (ACTIVE → IDLE)
             recorder.finalize()
