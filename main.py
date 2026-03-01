@@ -205,6 +205,7 @@ async def generate_digest():
             today_sections=today_text,
             summary=summary,
         )
+        _scheduler.mark_digest_generated()
         logger.info("Digest created: %s" % filepath)
 
         msg = _build_telegram_message(summary, prev_night, today_msgs, total)
@@ -337,6 +338,7 @@ async def post_init(application):
     # Recover active file from previous run (crash recovery)
     recovered = recover_active_on_startup()
     if recovered:
+        _scheduler.mark_digest_generated()
         logger.info("Recovered active digest: %s" % recovered.name)
 
     _scheduler.set_callbacks(on_digest=generate_digest, on_nudge=do_nudge)
