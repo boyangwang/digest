@@ -91,18 +91,15 @@ Verification methods:
 
 ---
 
-## Priority 3: Revoke compromised bot token
+## Priority 3: Revoke compromised bot token ✅ DONE
 
-**Issue:** Bot token `8324650609:AAGeTNX2...` is in git history (commits
-`662c5ee`, `52fa822`). Public repo = anyone can find it.
+**Issue:** Old token `8324650609:AAGeTNX2...` was in git history.
 
-**Status:** Needs Boyang to `/revoke` in BotFather (user account required).
-
-**Fix:**
-1. Boyang: @BotFather → `/revoke` → select @sleep_digest_bot → new token
-2. Update: `.env`, LaunchAgent plist, `.secrets.env`
-3. Restart bot
-4. Scrub git history with BFG Repo-Cleaner
+**Resolution:**
+1. ✅ Boyang revoked old token via BotFather
+2. ✅ New token `AAHLfG...` set in `.env`, LaunchAgent plist, `.secrets.env`
+3. ✅ Bot running with new token
+4. ⬜ Optional: scrub git history with BFG (low priority, old token is dead)
 
 ---
 
