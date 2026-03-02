@@ -234,7 +234,30 @@ _None identified today._
 - Duration: ~4 min
 ```
 
-**This adds a third top-level heading** (`# 🪞 Nightly Reflection`) to the document format. SPEC.md currently says "two sections only" — will need a spec amendment (SPEC-STRUCT-04).
+**This adds a third top-level heading** (`# 🪞 Nightly Reflection`) to the document format. Requires spec amendments:
+
+### New Spec Definitions (to add to `specs/SPEC.md`)
+
+**SPEC-STRUCT-04: Optional third section — Nightly Reflection**
+The document MAY have a third top-level heading `# 🪞 Nightly Reflection`, appended after `# Boyang's Recap`. This section is optional — only present when reflection has run.
+
+**SPEC-REFLECT-01: Reflection triggers on `/sleep`**
+When `/sleep` is received and an active digest exists, the reflection step runs BEFORE `finalize()`. If reflection fails, `/sleep` still finalizes.
+
+**SPEC-REFLECT-02: Reflection section position**
+`# 🪞 Nightly Reflection` is always the LAST section in the document, after `# Boyang's Recap`.
+
+**SPEC-REFLECT-03: Reflection section format**
+Contains 8 subsections (### level) for each extraction category, each with item count in the heading. Empty categories show `_None identified today._`. Ends with `### 📊 Stats`.
+
+**SPEC-REFLECT-04: YAML fields added by reflection**
+Reflection adds two fields to frontmatter: `reflection_at: "ISO8601"` and `reflection_model: "opus"`.
+
+**SPEC-REFLECT-05: Reflection is non-blocking**
+If the agent subprocess fails, times out, or returns empty — the reflection section is omitted and `/sleep` proceeds to finalize normally. The bot NEVER hangs on a failed reflection.
+
+**SPEC-REFLECT-06: Idempotent reflection**
+If `/sleep` is called twice (e.g., retry), the second call finds status already "final" and skips. No duplicate reflection sections.
 
 ---
 
@@ -407,6 +430,59 @@ _No recap — historical backfill. Recap system started March 2026._
 
 ---
 
+## Testing Strategy
+
+### Three-Tier Testing Principle (MANDATORY)
+
+This repository follows a strict three-tier testing approach. Every new feature MUST have tests at all three levels:
+
+| Tier | Tests In | What | How |
+|------|----------|------|-----|
+| **Unit** | `tests/test_reflection.py` | Pure logic, mocked deps | `pytest` with mocks |
+| **Integration** | `tests/test_reflection.py` | Module interactions, mocked LLM | Real file I/O, mocked subprocess |
+| **Live E2E** | `tests/test_live_e2e.py` | Full lifecycle via Telegram UI | Peekaboo UI automation on Mac Mini |
+
+**E2E is non-negotiable.** The live E2E tests send real Telegram messages via the Mac Mini's Telegram Desktop client (@claw0606) to the real running bot (@sleep_digest_bot), using Peekaboo for UI automation (`tests/telegram_ui.py`). This catches bugs that unit/integration tests cannot — network issues, bot handler registration, Obsidian file sync, real LLM responses.
+
+**Existing E2E infrastructure:**
+- `tests/telegram_ui.py` — Peekaboo-based helper (navigate_to_bot, send_message, read_last_bot_reply, etc.)
+- `tests/test_live_e2e.py` — 9 live tests including full `/digest` → text → `/sleep` cycle
+- Requires: Telegram Desktop running + bot running via launchd
+
+### Reflection-Specific Test Plan
+
+#### Unit Tests (in `tests/test_reflection.py`)
+
+- [ ] UT1: `parse_reflection_response()` — parse structured JSON from agent into 8 categories
+- [ ] UT2: `parse_reflection_response()` — handle malformed/partial JSON gracefully
+- [ ] UT3: `build_reflection_prompt()` — correct prompt with file paths and instructions
+- [ ] UT4: `format_reflection_report()` — markdown report from parsed categories
+- [ ] UT5: `format_reflection_report()` — empty categories show `_None identified today._`
+- [ ] UT6: `format_reflection_report()` — stats section includes message count, session count, duration
+- [ ] UT7: Edge case: zero messages in cycle → reflection gracefully skips
+- [ ] UT8: Edge case: agent returns empty response → graceful fallback
+
+#### Integration Tests (in `tests/test_reflection.py`)
+
+- [ ] IT1: `run_reflection()` with mocked `subprocess.run` — verify correct CLI args (`--local`, `--session-id`, `--model`)
+- [ ] IT2: `run_reflection()` — conversations saved to temp file before agent call
+- [ ] IT3: `run_reflection()` — agent subprocess timeout → returns fallback, no crash
+- [ ] IT4: `run_reflection()` — agent subprocess failure (rc≠0) → returns fallback, no crash
+- [ ] IT5: `append_reflection()` in recorder.py — reflection section appended AFTER `# Boyang's Recap`
+- [ ] IT6: `append_reflection()` — idempotent: calling twice doesn't duplicate
+- [ ] IT7: `append_reflection()` — YAML frontmatter gets `reflection_at` and `reflection_model` fields
+- [ ] IT8: `cmd_sleep` with reflection — finalize() called AFTER reflection completes
+- [ ] IT9: `cmd_sleep` with reflection failure — finalize() still called (graceful degradation)
+- [ ] IT10: Atomic write — reflection append uses `.tmp` → `os.rename` pattern
+
+#### Live E2E Tests (added to `tests/test_live_e2e.py`)
+
+- [ ] E2E1: Full reflection cycle — `/digest` → send text → `/sleep` → verify `# 🪞 Nightly Reflection` section exists in test digest file
+- [ ] E2E2: Reflection failure graceful — mock agent failure, `/sleep` still finalizes, bot replies "晚安 🌙"
+- [ ] E2E3: Verify test digest file has three sections after `/sleep`: `# Doudou's Summary`, `# Boyang's Recap`, `# 🪞 Nightly Reflection`
+
+---
+
 ## Tasks
 
 ### Phase 1: Infrastructure
@@ -415,28 +491,33 @@ _No recap — historical backfill. Recap system started March 2026._
 - [ ] T2: Create seed files: `memory/feedback-lessons.md`, `memory/compliments.md`, `memory/ideas.md`
 - [ ] T3: Write reflection prompt template: `templates/reflection-prompt.md`
 - [ ] T4: Write `reflection.py` — data collection, sub-agent orchestration, result parsing
-- [ ] T5: Amend `specs/SPEC.md` with SPEC-STRUCT-04
+- [ ] T5: Amend `specs/SPEC.md` with SPEC-STRUCT-04 and SPEC-REFLECT-01..06
 
-### Phase 2: Integration
+### Phase 2: Tests First (TDD — per workspace RULES.md §17)
 
-- [ ] T6: Modify `cmd_sleep` in `main.py` to call `run_reflection()` before `finalize()`
-- [ ] T7: Modify `recorder.py` — add `append_reflection()` function (follows `append_recap` pattern)
-- [ ] T8: Write tests: `tests/test_reflection.py`
+- [ ] T6: Write `tests/test_reflection.py` — all unit tests (UT1-UT8) + integration tests (IT1-IT10)
+- [ ] T7: Run tests — all FAIL (no implementation yet)
 
-### Phase 3: Testing
+### Phase 3: Implementation
 
-- [ ] T9: Unit tests for reflection parsing, prompt building, result formatting
-- [ ] T10: Integration test: mock `openclaw agent` call, verify workspace writes
-- [ ] T11: Live test: run on today's conversations, verify extraction quality
-- [ ] T12: Verify atomic write pattern works for reflection append (no sync conflict)
+- [ ] T8: Implement `reflection.py` — `run_reflection()`, `build_reflection_prompt()`, `parse_reflection_response()`, `format_reflection_report()`
+- [ ] T9: Add `append_reflection()` to `recorder.py` (follows `append_recap` pattern, inserts after `# Boyang's Recap`)
+- [ ] T10: Modify `cmd_sleep` in `main.py` — call `run_reflection()` before `finalize()`
+- [ ] T11: Run tests — all unit + integration PASS
 
-### Phase 4: Backfill
+### Phase 4: E2E Verification
 
-- [ ] T13: Write `scripts/backfill.py`
-- [ ] T14: Dry run on one day (Feb 8) — verify document format and extraction quality
-- [ ] T15: Run full backfill (23 days, chronological)
-- [ ] T16: Verify all 23 digest files + workspace memory files
-- [ ] T17: Verify timestamp chain integrity
+- [ ] T12: Add E2E tests (E2E1-E2E3) to `tests/test_live_e2e.py`
+- [ ] T13: Run full test suite — all 271+ existing tests pass + all new tests pass
+- [ ] T14: Manual live test: real `/sleep` → verify Obsidian file + workspace files updated
+
+### Phase 5: Backfill
+
+- [ ] T15: Write `scripts/backfill.py`
+- [ ] T16: Dry run on one day (Feb 8) — verify document format and extraction quality
+- [ ] T17: Run full backfill (23 days, chronological)
+- [ ] T18: Verify all 23 digest files + workspace memory files
+- [ ] T19: Verify timestamp chain integrity
 
 ---
 
