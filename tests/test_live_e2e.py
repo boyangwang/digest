@@ -278,6 +278,63 @@ class TestLiveCommands:
         assert "finalized_at" in content
 
 
+class TestLiveImageAttachment:
+    """Test sending images via Telegram UI."""
+
+    def test_photo_saved_and_recorded(self):
+        """Send /digest then photo, verify image saved and recorded."""
+        # Create test digest
+        send_message("/digest", wait_after=5)
+        files = get_test_files()
+        assert len(files) == 1
+
+        # Create a test image via PIL and copy to clipboard + paste
+        import subprocess as sp
+        sp.run(["python3", "-c", """
+from PIL import Image, ImageDraw
+img = Image.new('RGB', (200, 100), color=(30, 60, 30))
+d = ImageDraw.Draw(img)
+d.text((20, 40), 'E2E Test', fill=(255, 255, 100))
+img.save('/tmp/e2e-test-image.jpg')
+"""], timeout=10)
+
+        # Paste image via AppleScript
+        sp.run(["osascript", "-e", """
+set the clipboard to (read (POSIX file "/tmp/e2e-test-image.jpg") as JPEG picture)
+tell application "System Events"
+    tell process "Telegram"
+        keystroke "v" using command down
+    end tell
+end tell
+"""], timeout=10)
+        time.sleep(2)
+
+        # Send via Return
+        sp.run(["osascript", "-e", """
+tell application "System Events"
+    tell process "Telegram"
+        key code 36
+    end tell
+end tell
+"""], timeout=10)
+        time.sleep(5)
+
+        # Check log for image save
+        log = LOG_PATH.read_text()
+        assert "Test saved image" in log
+
+        # Check attachment file exists
+        test_attach = TEST_DIGEST_DIR / "attachments"
+        if test_attach.exists():
+            imgs = list(test_attach.glob("img-*.jpg"))
+            assert len(imgs) >= 1, "No image files in test attachments"
+
+        # Check digest file has image embed
+        content = files[0].read_text()
+        assert "![[img-" in content
+        assert "📷" in content
+
+
 class TestLiveLifecycle:
     """Test the full lifecycle in sequence."""
 

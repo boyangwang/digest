@@ -606,7 +606,25 @@ async def handle_photo(update, context):
         return
 
     if is_test:
-        await update.message.reply_text("🧪 📷 Photos not supported in test mode")
+        if not _test_recorder.has_active():
+            await update.message.reply_text("🧪 No active test digest for photo.")
+            return
+        try:
+            photo = update.message.photo[-1]
+            file = await context.bot.get_file(photo.file_id)
+            test_attach = TEST_DIGEST_DIR / "attachments"
+            test_attach.mkdir(parents=True, exist_ok=True)
+            now = datetime.now(SGT)
+            image_filename = "img-%s.jpg" % now.strftime("%Y%m%d-%H%M%S")
+            await file.download_to_drive(str(test_attach / image_filename))
+            caption = update.message.caption or None
+            _test_recorder.append_recap("📷 ![[%s]]%s" % (
+                image_filename, " %s" % caption if caption else ""))
+            logger.info("Test saved image: %s" % image_filename)
+            await update.message.reply_text("🧪 📷 ✍️")
+        except Exception as e:
+            logger.error("Test photo error: %s" % e)
+            await update.message.reply_text("🧪 📷 ❌ %s" % e)
         return
 
     if not has_active_file():
@@ -644,7 +662,31 @@ async def handle_document(update, context):
         return
 
     if is_test:
-        await update.message.reply_text("🧪 📎 Files not supported in test mode")
+        if not _test_recorder.has_active():
+            await update.message.reply_text("🧪 No active test digest for file.")
+            return
+        try:
+            doc = update.message.document
+            if not doc:
+                return
+            file = await context.bot.get_file(doc.file_id)
+            test_attach = TEST_DIGEST_DIR / "attachments"
+            test_attach.mkdir(parents=True, exist_ok=True)
+            now = datetime.now(SGT)
+            if doc.file_name:
+                filename = "file-%s-%s" % (now.strftime("%Y%m%d-%H%M%S"), Path(doc.file_name).name)
+            else:
+                ext = (doc.mime_type or "").split("/")[-1] or "bin"
+                filename = "file-%s.%s" % (now.strftime("%Y%m%d-%H%M%S"), ext)
+            await file.download_to_drive(str(test_attach / filename))
+            caption = update.message.caption or None
+            _test_recorder.append_recap("📎 ![[%s]]%s" % (
+                filename, " %s" % caption if caption else ""))
+            logger.info("Test saved file: %s" % filename)
+            await update.message.reply_text("🧪 📎 ✍️")
+        except Exception as e:
+            logger.error("Test file error: %s" % e)
+            await update.message.reply_text("🧪 📎 ❌ %s" % e)
         return
 
     if not has_active_file():
