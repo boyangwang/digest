@@ -56,11 +56,14 @@ from recorder import (
     append_voice_recap,
     append_image_recap,
     append_file_recap,
+    append_reflection,
     finalize,
     has_active_file,
+    get_active_file,
     get_active_status,
     recover_active_on_startup,
 )
+from reflection import run_reflection
 from scheduler import DigestScheduler
 from llm import compose_summary, compose_nudge
 from stt import transcribe
@@ -407,10 +410,41 @@ async def cmd_sleep(update, context):
         return
 
     _scheduler.mark_sleep()
+
+    # SPEC-REFLECT-01: Run reflection BEFORE finalize
+    if has_active_file():
+        await update.message.reply_text("晚安 🌙 Running reflection...")
+        try:
+            # Collect conversations for this cycle
+            status = get_active_status()
+            coverage_from = status.get("coverage_from")
+            if coverage_from:
+                since_ts = datetime.fromisoformat(str(coverage_from))
+                prev_night, today_msgs = collect_all_messages(since_ts)
+                all_msgs = prev_night + today_msgs
+                if all_msgs:
+                    formatted = format_messages(all_msgs)
+                    now = datetime.now(SGT)
+                    date_str = now.strftime("%Y-%m-%d")
+                    report = run_reflection(formatted, date_str)
+                    if report:
+                        append_reflection(report)
+                        logger.info("Reflection appended to digest.")
+                    else:
+                        logger.warning("Reflection returned no report.")
+                else:
+                    logger.info("No messages for reflection.")
+            else:
+                logger.warning("No coverage_from for reflection.")
+        except Exception as e:
+            # SPEC-REFLECT-05: Never block /sleep
+            logger.error("Reflection failed: %s" % e)
+            await update.message.reply_text("⚠️ Reflection failed, finalizing anyway.")
+
     success = finalize()
     if success:
-        await update.message.reply_text("晚安 🌙 已保存到 Obsidian ✅\nGoodnight! Saved to Obsidian ✅")
-        logger.info("Digest finalized.")
+        await update.message.reply_text("🪞✅ 已保存到 Obsidian\nReflection + finalize complete! Saved to Obsidian ✅")
+        logger.info("Digest finalized with reflection.")
     else:
         await update.message.reply_text("晚安 🌙\nGoodnight! (No active digest to finalize.)")
 

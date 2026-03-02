@@ -289,9 +289,11 @@ class TestSleepCommand:
         await main.cmd_sleep(update, _make_context())
 
         assert not recorder.has_active_file()
-        update.message.reply_text.assert_called_once()
-        reply = update.message.reply_text.call_args[0][0]
-        assert "Obsidian" in reply or "晚安" in reply
+        # /sleep now sends 2 messages: reflection status + finalize confirmation
+        assert update.message.reply_text.call_count >= 1
+        # Last call should confirm finalization
+        last_reply = update.message.reply_text.call_args_list[-1][0][0]
+        assert "Obsidian" in last_reply or "晚安" in last_reply
 
     @pytest.mark.asyncio
     async def test_sleep_when_idle(self, bot_env):
