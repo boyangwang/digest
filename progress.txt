@@ -1,3 +1,26 @@
 # Ralph Loop Progress
 Started: 2026-03-02 23:44:26
 ---
+
+## Iteration - T1+T2+T3
+- Root cause: missing pip packages (pytest-asyncio, python-telegram-bot, apscheduler) not installed in system Python
+- Once deps installed, all 9 text recollection tests passed immediately — the code was already correct
+- Files changed: none (dep install only)
+- Learnings: Check dependency installation before assuming code bugs
+---
+
+## Iteration - T4+T5
+- T4: Wrote 7 tests in test_orphan_cleanup.py covering orphan detection, finalized files untouched, multiple orphans with real active preserved
+- T5: Previous iteration added _is_orphan_active() and _mark_stale() to recorder.py but had TWO bugs:
+  1. Missing `import logging` + `logger = logging.getLogger(__name__)` — NameError silently swallowed
+  2. Missing `timedelta` in `from datetime import datetime` — also silently swallowed
+- Both exceptions were caught by the broad `except Exception: continue` in the for loop
+- Fix: `from datetime import datetime, timedelta` + `import logging` + logger init
+- Files changed: recorder.py, tests/test_orphan_cleanup.py
+- Learnings: Broad except clauses hide import errors. When adding new utility functions, verify ALL names they reference are imported.
+---
+
+## Iteration - T6
+- Full test suite: 244 passed, 3 skipped, 0 failed
+- No regressions
+---
