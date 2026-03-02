@@ -17,13 +17,16 @@ Naming: YYYY-MM-DD-HHMM.md (supports multiple files per day).
 Timestamp chain: each file's coverage_to → next file's coverage_from.
 """
 
+import logging
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import yaml
 
 from config import SGT, DIGEST_DIR
+
+logger = logging.getLogger(__name__)
 
 
 # ============================================================
@@ -423,32 +426,103 @@ def get_active_status():
         return {"state": "ACTIVE", "file": _active_file.name}
 
 
+def _is_orphan_active(filepath, fm, body, now):
+    """Check if an active file is an orphan (empty + older than 1 hour).
+
+    Orphan = status active/draft, no real summary content after
+    "# Doudou's Summary", and generated_at older than 1 hour.
+    """
+    gen_str = fm.get("generated_at", "")
+    if not gen_str:
+        return False
+    try:
+        gen_time = datetime.fromisoformat(str(gen_str))
+        # Make offset-naive comparison work
+        if gen_time.tzinfo is not None and now.tzinfo is None:
+            now = now.replace(tzinfo=gen_time.tzinfo)
+        elif gen_time.tzinfo is None and now.tzinfo is not None:
+            gen_time = gen_time.replace(tzinfo=now.tzinfo)
+        age = now - gen_time
+        if age < timedelta(hours=1):
+            return False
+    except Exception:
+        return False
+
+    # Check if there's actual summary content (not just section headers)
+    summary_marker = "# Doudou's Summary"
+    recap_marker = "# Boyang's Recap"
+    if summary_marker in body:
+        idx = body.index(summary_marker) + len(summary_marker)
+        # Get text between summary header and recap header (or end)
+        if recap_marker in body:
+            between = body[idx:body.index(recap_marker)]
+        else:
+            between = body[idx:]
+        # Strip whitespace — if only whitespace remains, it's empty
+        if between.strip():
+            return False  # Has real content
+
+    return True
+
+
+def _mark_stale(filepath, fm, body):
+    """Mark an orphan file as stale."""
+    fm["status"] = "stale"
+    new_content = _serialize_frontmatter(fm, body)
+    _atomic_write(filepath, new_content)
+    logger.info("Marked orphan as stale: %s", filepath.name)
+
+
 def recover_active_on_startup():
     """On bot startup, check if there's an unfinalized digest to resume.
 
     Scans for files with status='active'. Resumes the most recent one.
+    Also cleans up orphan active files (empty + older than 1 hour) by
+    marking them as status='stale'.
+
     v1 files have been moved to archive-v1/ — only v2 files exist here.
     """
     global _active_file
     DIGEST_DIR.mkdir(parents=True, exist_ok=True)
 
+    now = datetime.now(SGT)
     latest_active = None
     latest_time = None
+    all_active_files = []  # (filepath, fm, body, gen_time)
 
     for f in sorted(DIGEST_DIR.glob("*.md"), reverse=True):
         try:
             content = f.read_text()
-            fm, _ = _parse_frontmatter(content)
+            fm, body = _parse_frontmatter(content)
             if fm.get("status") in ("active", "draft"):
                 gen_str = fm.get("generated_at", "")
                 if gen_str:
                     gen_time = datetime.fromisoformat(str(gen_str))
+                    all_active_files.append((f, fm, body, gen_time))
                     if latest_time is None or gen_time > latest_time:
                         latest_active = f
                         latest_time = gen_time
         except Exception:
             continue
 
+    # Clean up orphan active files
+    for filepath, fm, body, gen_time in all_active_files:
+        if filepath == latest_active:
+            continue  # Check the candidate last
+        if _is_orphan_active(filepath, fm, body, now):
+            _mark_stale(filepath, fm, body)
+
+    # Check if the latest_active itself is an orphan
+    if latest_active:
+        for filepath, fm, body, gen_time in all_active_files:
+            if filepath == latest_active:
+                if _is_orphan_active(filepath, fm, body, now):
+                    _mark_stale(filepath, fm, body)
+                    latest_active = None  # Don't resume an orphan
+                break
+
+    # Set the active file to the most recent valid one
     if latest_active:
         _active_file = latest_active
+
     return latest_active
