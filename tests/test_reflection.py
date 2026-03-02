@@ -310,10 +310,8 @@ class TestRunReflectionIntegration:
             assert "agent" in args
             assert "--local" in args
             assert "--session-id" in args
-            # Verify model is opus
-            model_idx = args.index("--model") if "--model" in args else -1
-            if model_idx >= 0:
-                assert "opus" in args[model_idx + 1].lower()
+            # Model is set via session config, not CLI flag
+            assert "digest-bot-reflection" in " ".join(args)
 
     def test_conversations_saved_to_file(self):
         """IT2: Conversations saved to temp file before agent call."""

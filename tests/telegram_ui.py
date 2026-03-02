@@ -94,7 +94,10 @@ def navigate_to_bot():
 
 def send_message(text):
     """Type and send a message in the currently open chat.
-    
+
+    Uses AppleScript keystroke for reliability — Telegram's command autocomplete
+    menu intercepts Peekaboo's `type` when text starts with `/`.
+
     Returns True on success.
     """
     input_el = _find_element(role="textField", label_contains="write a message")
@@ -103,9 +106,21 @@ def send_message(text):
 
     _peekaboo(f"click --on {input_el['id']} --app Telegram")
     time.sleep(0.2)
-    _peekaboo(f'type "{text}" --app Telegram')
-    time.sleep(0.2)
-    _peekaboo("press return --app Telegram")
+
+    # Use AppleScript keystroke — reliable even with Telegram autocomplete
+    escaped = text.replace('"', '\\"')
+    _run(
+        f'osascript -e \'tell application "System Events" to tell process "Telegram" '
+        f'to keystroke "{escaped}"\'',
+        timeout=5,
+    )
+    time.sleep(0.3)
+    # Press Return via AppleScript (key code 36)
+    _run(
+        'osascript -e \'tell application "System Events" to tell process "Telegram" '
+        'to key code 36\'',
+        timeout=5,
+    )
     return True
 
 

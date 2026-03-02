@@ -184,6 +184,42 @@ class TestRecorder:
         self.active_file.write_text(content, encoding="utf-8")
         return True
 
+    def append_reflection(self):
+        """Append a mock reflection section for test mode.
+
+        No real agent call — just verifies the wiring works.
+        Uses the same section heading as production (SPEC-REFLECT-02).
+        """
+        if not self.has_active():
+            return False
+        content = self.active_file.read_text(encoding="utf-8")
+        # Idempotent — skip if already present
+        if "🪞 Nightly Reflection" in content:
+            return True
+        now = datetime.now(SGT)
+        mock_report = (
+            "\n# 🪞 Nightly Reflection\n\n"
+            "> Test mode — no real extraction.\n\n"
+            "### 📌 Durable Facts (0)\n"
+            "_None identified today._\n\n"
+            "### 📊 Stats\n"
+            "- Messages processed: 0\n"
+            "- Model: test-mock\n"
+            "- Timestamp: %s\n"
+        ) % now.isoformat()
+        # Update YAML
+        import yaml as _yaml
+        parts = content.split("---", 2)
+        if len(parts) >= 3:
+            fm = _yaml.safe_load(parts[1]) or {}
+            fm["reflection_at"] = now.isoformat()
+            fm["reflection_model"] = "test-mock"
+            fm_str = _yaml.dump(fm, default_flow_style=False, allow_unicode=True).strip()
+            content = "---\n%s\n---\n%s" % (fm_str, parts[2])
+        content = content.rstrip() + mock_report
+        self.active_file.write_text(content, encoding="utf-8")
+        return True
+
     def finalize(self):
         if not self.has_active():
             return False
@@ -402,9 +438,13 @@ async def cmd_sleep(update, context):
             _test_recorder.has_active(),
             _test_recorder.active_file,
         ))
+        # Test mode reflection: append a mock reflection section (no real agent call)
+        if _test_recorder.has_active():
+            _test_recorder.append_reflection()
+            logger.info("Test reflection appended.")
         success = _test_recorder.finalize()
         if success:
-            await update.message.reply_text("🧪 晚安 🌙 Test digest finalized ✅")
+            await update.message.reply_text("🧪 晚安 🌙 Test digest finalized ✅ (with reflection)")
         else:
             await update.message.reply_text("🧪 晚安 🌙 No active test digest to finalize.")
         return

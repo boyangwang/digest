@@ -144,7 +144,6 @@ def _call_agent(prompt: str, timeout: int = 300) -> str | None:
             [
                 "openclaw", "agent", "--local",
                 "--session-id", REFLECTION_SESSION_ID,
-                "--model", REFLECTION_MODEL,
                 "--message", prompt,
                 "--json",
                 "--timeout", str(timeout),

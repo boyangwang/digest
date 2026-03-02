@@ -133,15 +133,30 @@ def _find_input_field():
 
 
 def send_message(text, wait_after=3):
-    """Send a message and wait for bot to process it."""
-    input_id = _find_input_field()
-    assert input_id, "Message input field not found in Telegram"
+    """Send a message and wait for bot to process it.
 
-    _peekaboo(f"click --on {input_id} --app Telegram")
-    time.sleep(0.2)
-    _peekaboo(f'type "{text}" --app Telegram')
-    time.sleep(0.2)
-    _peekaboo("press return --app Telegram")
+    Uses AppleScript keystroke for reliable text input into Telegram Desktop.
+    Peekaboo's `type` command doesn't reliably reach Telegram's input field
+    (text reports success but value stays empty).
+    """
+    import subprocess as sp
+
+    # Focus Telegram and use AppleScript keystroke (proven reliable)
+    sp.run(["osascript", "-e", """
+tell application "Telegram" to activate
+delay 0.3
+tell application "System Events"
+    tell process "Telegram"
+        keystroke "a" using command down
+        delay 0.1
+        key code 51
+        delay 0.1
+        keystroke "%s"
+        delay 0.2
+        key code 36
+    end tell
+end tell
+""" % text.replace('"', '\\"').replace("'", "\\'")], timeout=10, capture_output=True)
     time.sleep(wait_after)
 
 
@@ -400,3 +415,86 @@ class TestLiveLifecycle:
         # Our test user should be accepted (not rejected)
         assert "Rejected user 6805433372" not in log
         assert "Test user 6805433372" in log
+
+
+class TestLiveReflection:
+    """E2E tests for nightly reflection (SPEC-REFLECT-01..06).
+
+    Test mode uses a mock reflection (no real Opus agent call).
+    Verifies wiring: /sleep → reflection section → finalize.
+    """
+
+    def test_sleep_includes_reflection(self):
+        """E2E1: /digest → text → /sleep → verify reflection section in file."""
+        # 1. Create digest
+        send_message("/digest", wait_after=5)
+        files = get_test_files()
+        assert len(files) == 1, f"Expected 1 file, got {len(files)}"
+        filepath = files[0]
+
+        # 2. Add some recap
+        send_message("Testing reflection feature", wait_after=4)
+
+        # 3. /sleep → should trigger test reflection + finalize
+        marker = drop_log_marker()
+        send_message("/sleep", wait_after=5)
+
+        log = get_log_since(marker)
+        assert "Test reflection appended" in log, "Reflection not triggered"
+
+        # 4. Verify reflection section in file
+        content = filepath.read_text()
+        assert "🪞 Nightly Reflection" in content, \
+            "Reflection section missing. Content:\n%s" % content[:500]
+        assert "reflection_at:" in content, "YAML reflection_at missing"
+        assert "reflection_model:" in content, "YAML reflection_model missing"
+
+        # 5. Verify finalization happened AFTER reflection
+        assert "status: final" in content or 'status: "final"' in content, \
+            "File not finalized after reflection"
+        assert "finalized_at" in content
+
+        # 6. Verify document has all three sections in correct order
+        summary_pos = content.index("# Doudou's Summary")
+        recap_pos = content.index("# Boyang's Recap")
+        reflection_pos = content.index("# 🪞 Nightly Reflection")
+        assert summary_pos < recap_pos < reflection_pos, \
+            "Sections out of order: summary=%d, recap=%d, reflection=%d" % (
+                summary_pos, recap_pos, reflection_pos)
+
+    def test_sleep_reflection_idempotent(self):
+        """E2E2: /sleep twice — reflection section appears only once."""
+        send_message("/digest", wait_after=5)
+        files = get_test_files()
+        assert len(files) == 1
+        filepath = files[0]
+
+        # First /sleep — creates reflection + finalizes
+        send_message("/sleep", wait_after=5)
+        content1 = filepath.read_text()
+        reflection_count = content1.count("🪞 Nightly Reflection")
+        assert reflection_count == 1, "Expected 1 reflection section, got %d" % reflection_count
+
+        # Second /sleep — no active digest, should say "no active"
+        marker = drop_log_marker()
+        send_message("/sleep", wait_after=4)
+        log = get_log_since(marker)
+        assert "has_active=False" in log
+
+        # File unchanged
+        content2 = filepath.read_text()
+        assert content2.count("🪞 Nightly Reflection") == 1
+
+    def test_sleep_without_digest_no_reflection(self):
+        """E2E3: /sleep when IDLE — no reflection, just goodbye."""
+        marker = drop_log_marker()
+        send_message("/sleep", wait_after=4)
+
+        log = get_log_since(marker)
+        assert "has_active=False" in log
+
+        # No test files should have reflection
+        files = get_test_files()
+        for f in files:
+            content = f.read_text()
+            assert "🪞 Nightly Reflection" not in content
