@@ -1,6 +1,6 @@
-# PRD: Nightly Reflection — Automated Knowledge Extraction from Conversations
+# PRD: Nightly Reflection — Automated Knowledge Extraction
 
-> **Project:** Doudou Infrastructure — Memory & Learning System
+> **Project:** Sleep Digest Bot — Nightly Reflection Feature
 > **Date:** 2026-03-02
 > **Priority:** P1 High
 > **Estimated effort:** Large (4-8hr)
@@ -10,292 +10,194 @@
 
 ## Context
 
+### Current System (How It Actually Works)
+
+The Sleep Digest Bot is a standalone Python Telegram bot (`main.py`) with this state machine:
+
+```
+IDLE  → /digest → collect conversations via collector.py, compose per-session
+                   summaries via llm.py (Doudou), create file via recorder.py,
+                   start nudge cycle → ACTIVE
+ACTIVE → /digest → collect NEW messages since coverage_to, append summaries → ACTIVE
+ACTIVE → text    → append verbatim recap to "# Boyang's Recap" + re-collect → ACTIVE
+ACTIVE → voice   → save .ogg to vault, transcribe via stt.py, append → ACTIVE
+ACTIVE → photo   → save .jpg to vault, append embed → ACTIVE
+ACTIVE → /sleep  → set status="final", stop nudging → IDLE
+```
+
+**Key architecture facts** (from reading the actual code):
+- **Sleep detection:** `/sleep` command ONLY. No verbal/lexical detection. (`cmd_sleep` in `main.py`)
+- **LLM interaction:** `llm.py` calls `openclaw agent --local --session-id digest-bot` as a subprocess. Conversations are saved to a file in `transcripts/`, then Doudou is told to read that file and compose a summary.
+- **File writes:** All via `recorder.py` using atomic writes (`.tmp` → `os.rename`). This pattern has been working without Obsidian sync conflicts.
+- **Scheduling:** `scheduler.py` uses APScheduler — 22:30 SGT digest trigger, 30-min nudge cycle (22:30–07:00).
+- **Document format:** v2 per `specs/SPEC.md` — two sections only: `# Doudou's Summary` + `# Boyang's Recap`. No raw conversations in digest file (stored in `transcripts/`).
+- **File naming:** `YYYY-MM-DD-HHMM.md` (supports multiple per day, date-decoupled).
+
 ### The Problem
 
-Every day, Boyang and I have rich conversations across multiple sessions — discussions about investments, health decisions, technical architecture, personal preferences, ideas, corrections to my behavior. Currently, only ONE output captures this: the **Doudou Digest**, a verbatim conversation record saved to Obsidian.
-
-The digest is a diary. It preserves *what was said* but extracts nothing *structured* from it. If Boyang mentions Ashley's birthday, or corrects how I format tables, or makes an investment decision — that knowledge lives only in a narrative transcript. To recover it later, I'd have to search through hundreds of pages of conversation text and hope I find it.
-
-Meanwhile, my workspace files (RULES.md, INCIDENTS.md, MEMORY.md, memory/*.md) are updated **only when I remember to do so during the conversation**. This is unreliable — I miss things, especially corrections and preferences that Boyang states casually.
-
-每天我们进行大量对话——投资讨论、健康决策、技术架构、个人偏好、想法、对我行为的纠正。目前唯一的输出是 Doudou Digest（逐字对话记录）。它保留了"说了什么"，但没有提取任何结构化知识。如果 Boyang 提到了一个偏好或做了一个决策，这个信息只存在于叙事文本中，之后要找回来非常困难。
+The digest captures WHAT was discussed (summaries + verbatim recap). But it extracts no structured knowledge. Facts, preferences, corrections, decisions, ideas — all buried in narrative text. My workspace files (`RULES.md`, `MEMORY.md`, `memory/*.md`) are updated only when I remember during conversation. This is unreliable.
 
 ### The Solution
 
-**Nightly Reflection** — an automated, AI-powered extraction task that runs at the end of each day's cycle. When Boyang says goodnight, the system:
+Add a **Nightly Reflection** step that triggers when `/sleep` is received. Before finalizing the document, the system:
 
-1. Reads ALL conversations from the current cycle
-2. Extracts structured knowledge across 8 categories
+1. Collects all conversation transcripts for this cycle (reusing `collector.py`)
+2. Spawns an Opus sub-agent to extract structured knowledge across 8 categories
 3. Stores extracted items in the correct workspace locations
-4. Appends a full reflection report to the Obsidian digest document
-5. Commits all workspace changes to git
-
-The result: every morning I wake up with yesterday's knowledge already crystallized and searchable. No more relying on my in-session memory to document things.
+4. Appends a reflection report to the digest document
+5. THEN finalizes (sets `status: "final"`)
 
 ---
 
 ## Architecture
 
-### Trigger & Timing
+### Trigger: Extending `/sleep`
 
-**Primary trigger:** Boyang says goodnight / "I go to sleep" / similar signal in the sleep digest session (CLAW 008).
+The trigger is the existing `/sleep` command handler (`cmd_sleep` in `main.py`). The flow becomes:
 
-**No fallback timer.** The digest document seals when the sleep digest bot's session naturally concludes. A document can't grow forever — it will eventually seal. No artificial deadline.
+```python
+# Current /sleep flow:
+async def cmd_sleep(update, context):
+    _scheduler.mark_sleep()
+    finalize()              # sets status="final"
+    reply("晚安 🌙")
 
-**Sequence:**
-
-```
-22:30  Cron fires → daily-digest.py generates DRAFT digest → [DAILY_DIGEST] sent to CLAW 008
-       ↓
-       CLAW 008 sends bedtime message to Boyang, asks for recap
-       ↓
-       Boyang gives recap + signals sleep ("晚安" / "good night" / "I go to sleep")
-       ↓
-       CLAW 008: (a) Appends recap VERBATIM → marks digest "final"
-                 (b) Triggers Nightly Reflection ← NEW
-       ↓
-       Reflection sub-agent runs (Opus) — 3-8 min
-       ↓
-       Results: workspace updated + reflection appended to digest + git commit
+# New /sleep flow:
+async def cmd_sleep(update, context):
+    _scheduler.mark_sleep()
+    reply("晚安 🌙 Running reflection...")
+    await run_reflection()  # NEW: extract knowledge, append to digest
+    finalize()              # THEN finalize (status="final")
+    reply("🪞 Reflection complete. Saved to Obsidian ✅")
 ```
 
-### Cycle Scope
+**No verbal/lexical sleep detection.** The `/sleep` command is the sole trigger. This is the existing pattern and it works.
 
-The reflection covers the **same cycle as the digest**: from the previous digest's `coverage_to` to the current digest's `coverage_to`. This is NOT strictly date-based — it follows the sleep-wake rhythm.
+**No fallback timer.** The document eventually seals when `/sleep` is sent. The bot can't be active forever — the scheduler resets at noon, and a new `/digest` creates a new file.
 
-Example: If yesterday's digest had `coverage_to: 2026-03-01T22:30:00+08:00` and today's has `coverage_to: 2026-03-02T22:30:00+08:00`, the reflection covers exactly that 24-hour window.
+### Data Source: Reusing collector.py
 
-### Data Source
+The reflection reads the same data as `generate_digest()`:
 
-The reflection reads the same conversation transcripts as the digest script:
-- All session transcripts in `~/.openclaw/agents/main/sessions/`
-- Filtered by the cycle's time window
-- Includes ALL sessions (DM, groups, webchat) — except cron/run sessions
+```python
+from collector import collect_all_messages, format_messages, group_by_session
 
-### Execution Model
+# Get cycle boundaries from active digest file
+status = get_active_status()
+coverage_from = datetime.fromisoformat(status["coverage_from"])
+coverage_to = datetime.now(SGT)  # everything up to now
 
-**Decision: Sub-agent on Opus.**
-
-CLAW 008 spawns a dedicated Opus sub-agent via `sessions_spawn` for each reflection run. Rationale:
-
-1. **Reusability** — the same reflection prompt works for nightly runs AND historical backfill. One extraction engine, any input.
-2. **Clean context** — fresh context window dedicated entirely to reflection. No noise from CLAW 008's digest/recap flow.
-3. **Non-blocking** — CLAW 008 stays free (though Boyang is asleep, so this is secondary).
-4. **Model: Opus always** — extraction quality matters. This is knowledge that persists forever. No cost-cutting on the extraction engine.
-
-### Interaction with Sleep Digest Bot
-
-The sleep digest bot (CLAW 008) currently has its own cron + Python script. The reflection integrates as follows:
-
-**daily-digest.py remains unchanged** — it generates the DRAFT digest and sends [DAILY_DIGEST].
-
-**CLAW 008's procedure gets extended** — after saving Boyang's recap and marking status `final`, it triggers the reflection:
-
-```
-CLAW 008 detects goodnight signal
-  ↓
-Marks digest "final" (existing behavior)
-  ↓
-Calls `exec` to run `scripts/nightly-reflection.py` with today's date
-  ↓
-nightly-reflection.py:
-  1. Reads today's digest file to get coverage_from / coverage_to
-  2. Collects all conversation messages within that cycle (reuses daily-digest.py logic)
-  3. Writes conversation data to a temp file: /tmp/reflection-input-YYYY-MM-DD.json
-  4. Calls `openclaw sessions send` to spawn Opus sub-agent with:
-     - The reflection prompt template (from workspace)
-     - Path to the conversation data file
-     - Path to today's digest file
-     - Paths to all workspace memory files (for deduplication)
-  ↓
-Sub-agent (Opus):
-  1. Reads conversation data from temp file
-  2. Reads existing workspace files for dedup context
-  3. Extracts all 8 categories
-  4. Writes to workspace files (memory/facts/, memory/feedback-lessons.md, etc.)
-  5. Appends reflection section to the Obsidian digest document
-  6. Runs `git add -A && git commit -m "nightly-reflection: YYYY-MM-DD" && git push origin main`
-  7. Reports completion
+# Collect all messages in this cycle
+prev_night, today_msgs = collect_all_messages(coverage_from)
+all_msgs = prev_night + today_msgs
+formatted = format_messages(all_msgs)
 ```
 
-**Key design choice:** The Python script handles data collection (deterministic, fast, $0). The Opus sub-agent handles extraction (requires reasoning). Clean separation of concerns.
+This is the exact same collector logic already proven across 271 tests. No new data collection code needed.
 
-**For historical backfill:** `scripts/backfill-reflection.py` runs the same pipeline in a loop for each historical date, substituting the cycle boundaries. Same sub-agent prompt, different input data.
+### Execution Model: Sub-Agent on Opus
+
+**Why sub-agent, not inline:**
+- The reflection needs to process 50-100K tokens of conversation data
+- `llm.py` already uses the sub-process pattern (`openclaw agent --local`)
+- A fresh context window is cleaner for extraction
+- The same prompt is reusable for historical backfill
+
+**Implementation:** New module `reflection.py` (following the pattern of `llm.py`):
+
+```python
+def run_reflection(conversations_text: str, existing_memory: dict) -> dict:
+    """
+    1. Save conversations + existing memory context to temp files
+    2. Call `openclaw agent --local` with Opus model and reflection prompt
+    3. Agent reads files, extracts 8 categories, writes to workspace files
+    4. Agent returns structured JSON summary of what was extracted
+    5. Parse and return for appending to digest document
+    """
+```
+
+The sub-agent has full tool access (read, write, edit, exec) — it can directly modify workspace files, run git, etc. Same as how `llm.py` already delegates to Doudou.
+
+**Model: Opus always.** This is persistent knowledge. No cost-cutting.
+
+### Interaction Between Digest Bot and OpenClaw
+
+Already working via `llm.py`'s `_ask_doudou()` pattern:
+
+```
+Digest Bot (Python)
+  → saves data to file (transcripts/)
+  → subprocess: `openclaw agent --local --session-id digest-bot-reflection --message "..."`
+  → OpenClaw agent reads file, does work, writes results
+  → subprocess returns JSON response
+  → Digest Bot parses response, appends to digest document
+```
+
+The reflection follows this EXACT pattern. No new interaction mechanism needed.
 
 ---
 
 ## Extraction Categories (8)
 
-Each category has: definition, examples, storage location in workspace, and format.
-
 ### 1. 📌 Durable Facts
-**Definition:** Information that remains true beyond today. About people, places, companies, numbers, relationships, status changes.
+**What:** Information that remains true beyond today. People, places, companies, numbers, relationships, dates.
+**Examples:** "Ashley's birthday is March 15", "VO2max measured at 46"
+**Workspace:** `memory/facts/YYYY-MM-DD.md` (new directory, one file per day)
+**Format:** `- **[Category/Entity]** Fact statement`
 
-**Examples:**
-- "Ashley's birthday is March 15"
-- "Portfolio company X raised Series A at $50M"
-- "Boyang's VO2max measured at 46"
-- "Office lease renewal is in September 2026"
-
-**Workspace location:** `memory/facts/YYYY-MM-DD.md` (new directory)
-**Format:**
-```markdown
-## Facts extracted from 2026-03-02 cycle
-
-- **[People/Ashley]** Birthday is March 15
-- **[Health/Biometrics]** VO2max: 46 mL/min/kg (up from 44, measured 2026-03-02)
-- **[Portfolio/CompanyX]** Raised Series A at $50M valuation, led by Fund Y
-```
-**Tagging:** Each fact is tagged with a category (People, Health, Portfolio, Infrastructure, Personal, etc.) for searchability.
-
-### 2. 🔧 Feedback Lessons (Corrections → Preferences)
-**Definition:** Direct or indirect corrections Boyang gives me. Things I did wrong, ways I should change my behavior, preferences about output style/format/approach.
-
-**Examples:**
-- "Don't use markdown tables in Telegram"
-- "Always search before answering infra questions"
-- "Stop opening with 'Great question!'"
-- "When I say X, I mean Y"
-
-**Workspace location:** `memory/feedback-lessons.md` (append-only, persistent across days)
-**Also:** If the lesson warrants a rule change → update RULES.md directly.
-**Format:**
-```markdown
-## 2026-03-02
-
-- **[Formatting]** No markdown tables in Telegram — they render poorly on mobile
-  - _Context:_ Boyang corrected me when I sent a comparison table
-  - _Action:_ Use code blocks or bullet lists instead
-- **[Communication]** When Boyang says "search and research," always include cost estimate
-  - _Context:_ Missed the cost estimation step in research report
-  - _Action:_ Updated USER.md keyword instructions
-```
+### 2. 🔧 Feedback Lessons
+**What:** Corrections Boyang gives me. Behavior changes, output preferences, style adjustments.
+**Examples:** "Don't use markdown tables in Telegram", "Always search before answering"
+**Workspace:** `memory/feedback-lessons.md` (append-only, with dates)
+**Also:** Auto-apply to RULES.md when correction is clear and unambiguous. Log every auto-applied change in the reflection report.
 
 ### 3. ⚠️ Rules & Incidents
-**Definition:** New rules that should be formalized, near-misses, mistakes I made, patterns that should be prevented.
-
-**Examples:**
-- "I fabricated a technical explanation — P1 incident"
-- "Gateway config change without validation — near-miss"
-- "New rule: always verify X before doing Y"
-
-**Workspace location:** INCIDENTS.md (for incidents), RULES.md (for rules)
-**Format:** Follows existing INCIDENTS.md format (date, severity, what happened, root cause, prevention).
-**Note:** Only PROPOSE additions to RULES.md and INCIDENTS.md in the reflection report. Actual file edits require careful review — the reflection sub-agent should generate the proposed text, and the main agent (or a review step) applies it.
+**What:** Formalized rules, near-misses, mistakes, patterns to prevent.
+**Examples:** "I fabricated a technical explanation", "New rule: verify before acting"
+**Workspace:** INCIDENTS.md, RULES.md
+**Policy:** Auto-apply sparingly. Only when evidence is clear. Every change logged in report.
 
 ### 4. 🌟 Compliments & Positive Feedback
-**Definition:** Things Boyang praised, things that went well, positive signals about my performance. Used for calibration — knowing what works well is as important as knowing what to fix.
-
-**Examples:**
-- "That analysis was excellent"
-- "Good catch on the security issue"
-- "This is exactly what I wanted"
-- Boyang sharing my work with others (implicit approval)
-
-**Workspace location:** `memory/compliments.md` (append-only)
-**Format:**
-```markdown
-## 2026-03-02
-
-- **"That hire-ai analysis was thorough and well-organized"** — context: 28-proposal report on Felix Craft's guide
-- **Boyang approved the nightly reflection idea immediately** — implicit: the PRD approach is working
-```
+**What:** What Boyang praised, what went well, positive signals about my performance.
+**Examples:** "That analysis was excellent", "Good catch", sharing my work with others
+**Workspace:** `memory/compliments.md` (append-only)
 
 ### 5. 🧭 Decisions & Rationale
-**Definition:** Choices made during the day and WHY. Decisions without rationale are useless for future reference — the "why" is what matters.
-
-**Examples:**
-- "Decided to use Cloudflare Tunnel over Tailscale Funnel — reason: DNS stability"
-- "Chose Sonnet over Opus for daily digest — reason: cost, sufficient quality"
-- "Declined to implement feature X — reason: YAGNI, revisit in Q2"
-
-**Workspace location:** `memory/decisions/YYYY-MM-DD.md` (new directory)
-**Format:**
-```markdown
-## Decisions from 2026-03-02 cycle
-
-### Use sub-agent on Sonnet for nightly reflection
-- **Choice:** Sonnet sub-agent, not inline Opus
-- **Rationale:** Cost control (~$0.05/run vs ~$0.40), non-blocking, sufficient quality for extraction
-- **Alternatives considered:** Inline Opus (expensive), Haiku (insufficient reasoning)
-- **Reversible:** Yes — can switch model anytime
-```
+**What:** Choices made and WHY. The rationale matters more than the decision.
+**Examples:** "Use Opus for reflection — quality matters for persistent knowledge"
+**Workspace:** `memory/decisions/YYYY-MM-DD.md` (new directory)
 
 ### 6. 📋 Action Items & Commitments
-**Definition:** Things mentioned in conversation that should be tracked — promises made, tasks planned, follow-ups needed. If it's not on KANBAN, it might be forgotten.
-
-**Examples:**
-- "I'll set up the Cloudflare Tunnel tomorrow"
-- "Need to check Ashley's flight details"
-- "Boyang asked me to research X — not yet started"
-
-**Workspace location:** KANBAN.md (add to appropriate section)
-**Format:** Standard KANBAN checkbox format.
-**Policy:** Auto-add directly to KANBAN.md. Check for duplicates before adding.
+**What:** Promises, tasks planned, follow-ups needed. Things that should be on KANBAN.
+**Examples:** "Set up Cloudflare Tunnel tomorrow", "Research X"
+**Workspace:** KANBAN.md (direct add, check for duplicates)
 
 ### 7. 💡 Ideas & Brainstorms
-**Definition:** Ideas mentioned in passing, creative suggestions, "what if" explorations, future possibilities. These deserve capture even if not actionable today.
-
-**Examples:**
-- "What if we built a voice-first interface for the fund?"
-- "Could use LLMs for LP report generation"
-- "Idea: automated morning health briefing from CGM data"
-
-**Workspace location:** `memory/ideas.md` (append-only)
-**Format:**
-```markdown
-## 2026-03-02
-
-- **Voice-first fund interface** — Boyang mused about LPs being able to call an AI to get fund updates. Not actionable now, but worth revisiting.
-- **CGM morning briefing** — auto-pull FreeStyle Libre data, generate health summary. Needs API research.
-```
+**What:** Ideas mentioned in passing, creative suggestions, future possibilities.
+**Examples:** "What if we built a voice-first LP interface?"
+**Workspace:** `memory/ideas.md` (append-only)
 
 ### 8. 🔬 Technical Learnings
-**Definition:** New tools discovered, API quirks, debugging insights, architectural patterns, things that would save time if remembered.
-
-**Examples:**
-- "Tailscale Funnel supports TCP but not UDP"
-- "OpenClaw sessions.json uses mtime for cache invalidation"
-- "canvas.snapshot after navigate kills companion app (>25MB)"
-
-**Workspace location:** `memory/YYYY-MM-DD.md` (existing daily memory files) + TOOLS.md if critical
-**Format:** Follows existing memory file format.
+**What:** New tools, API quirks, debugging insights, architectural patterns.
+**Examples:** "OpenClaw sessions.json uses mtime for cache invalidation"
+**Workspace:** `memory/YYYY-MM-DD.md` (existing daily files) + TOOLS.md if critical
 
 ---
 
-## Output: Reflection Report in Obsidian Digest
+## Output: Reflection Section in Digest Document
 
-After extraction, the reflection report is appended to the current day's digest file in Obsidian. This gives Boyang a single document per day that contains both the verbatim conversations AND the structured extractions.
-
-### Digest File Structure (Updated)
+After extraction, a new section is appended to the digest document BEFORE finalization:
 
 ```markdown
----
-date: 2026-03-02
-day: Monday
-generated_at: "..."
-coverage_from: "..."
-coverage_to: "..."
-status: final
-reflection_at: "2026-03-02T23:45:00+08:00"    # NEW
-reflection_model: "sonnet"                       # NEW
----
+# Doudou's Summary
+[existing summaries]
 
-# March 2, 2026 — Monday
+# Boyang's Recap
+[existing recap entries]
 
-## 🌃 Previous Night
-[existing content]
+# 🪞 Nightly Reflection
 
-## 🗣️ Today's Conversations
-[existing content]
-
-## 📝 Boyang's Day Recap
-[verbatim recap]
-
-## 🪞 Nightly Reflection                          ← NEW SECTION
-
-> Extracted from today's conversations by Doudou.
-> All items below have also been stored in the workspace.
+> Extracted by Doudou (Opus). All items stored in workspace.
 
 ### 📌 Durable Facts (3)
 - **[People/Ashley]** Birthday is March 15
@@ -304,7 +206,6 @@ reflection_model: "sonnet"                       # NEW
 
 ### 🔧 Feedback Lessons (1)
 - **[Formatting]** No markdown tables in Telegram
-  - Action: Use bullet lists instead
 
 ### ⚠️ Rules & Incidents (0)
 _None identified today._
@@ -313,31 +214,31 @@ _None identified today._
 - "That analysis was thorough" — re: hire-ai report
 
 ### 🧭 Decisions (2)
-- Use Sonnet sub-agent for nightly reflection (cost: ~$0.05/run)
-- Implement all 3 proposals from hire-ai analysis
+- Use Opus for nightly reflection (quality > cost)
+- Implement table-share as proper skill
 
 ### 📋 Action Items (1)
-- [ ] Set up Cloudflare Tunnel evaluation
+- [ ] Set up Cloudflare Tunnel evaluation → added to KANBAN
 
 ### 💡 Ideas (1)
-- CGM morning health briefing — pull FreeStyle Libre data automatically
+- CGM morning health briefing
 
 ### 🔬 Technical Learnings (1)
-- OpenClaw sessions_spawn supports `thread: true` for persistent sub-agents
+- `openclaw agent --local` subprocess pattern for digest-bot ↔ OpenClaw
 
-### 📊 Reflection Stats
+### 📊 Stats
 - Messages processed: 142
 - Sessions scanned: 5
 - Items extracted: 10
-- Model: Sonnet
-- Cost: ~$0.05
+- Model: Opus
+- Duration: ~4 min
 ```
+
+**This adds a third top-level heading** (`# 🪞 Nightly Reflection`) to the document format. SPEC.md currently says "two sections only" — will need a spec amendment (SPEC-STRUCT-04).
 
 ---
 
-## Workspace File Changes Summary
-
-After each reflection run, the following files may be modified:
+## Workspace Changes After Reflection
 
 | File | Action | Notes |
 |------|--------|-------|
@@ -346,101 +247,13 @@ After each reflection run, the following files may be modified:
 | `memory/compliments.md` | Append | Positive feedback log |
 | `memory/decisions/YYYY-MM-DD.md` | Create | Decisions with rationale |
 | `memory/ideas.md` | Append | Ideas and brainstorms |
-| `memory/YYYY-MM-DD.md` | Append | Technical learnings (existing pattern) |
+| `memory/YYYY-MM-DD.md` | Append | Technical learnings |
 | `KANBAN.md` | Append | New action items (deduped) |
-| `INCIDENTS.md` | Append | New incidents (if any, proposed — review before applying) |
-| `RULES.md` | Append (sparingly) | New rules auto-applied when unambiguous; logged in report |
+| `INCIDENTS.md` | Append | New incidents (rare, cautious) |
+| `RULES.md` | Append | New rules (rare, only clear corrections) |
+| Git | Commit + push | `"nightly-reflection: YYYY-MM-DD"` |
 
-**RULES.md policy:** The reflection task MAY auto-apply new rules and incidents directly to RULES.md and INCIDENTS.md — but **sparingly and cautiously**. Only add rules when the evidence is clear and the correction is unambiguous. When in doubt, propose in the report rather than auto-apply. Every auto-applied change is logged in the reflection report for auditability.
-
----
-
-## Requirements
-
-### Core
-
-- [ ] R1: Trigger detection — CLAW 008 recognizes goodnight signals (multi-language: "good night", "晚安", "I go to sleep", "sleep mode", etc.)
-- [ ] R2: Conversation data collection — read all session transcripts for the current cycle, same scope as digest
-- [ ] R3: 8-category extraction — all categories defined above, with consistent formatting
-- [ ] R4: Workspace storage — each category stored in its designated location, correctly formatted
-- [ ] R5: Deduplication — don't add facts/items that already exist in workspace files
-- [ ] R6: Obsidian append — full reflection report appended to the day's digest document
-- [ ] R7: Git commit — all workspace changes committed and pushed after reflection
-- [ ] R8: Non-blocking — reflection sub-agent doesn't block CLAW 008's interaction with Boyang
-- [ ] R9: Idempotent — running reflection twice for the same cycle produces no duplicate entries
-- [ ] R10: Auditable — reflection report in Obsidian shows exactly what was extracted and where it was stored
-- [ ] R11: RULES.md auto-apply — new rules applied directly but sparingly; every change logged in report
-
-### Model & Execution
-
-- [ ] R12: Model is Opus always — no cost-cutting on extraction quality
-- [ ] R13: Execution via sub-agent spawn — fresh context, reusable for backfill
-- [ ] R14: No fallback timer — document seals when the sleep digest session naturally concludes
-
-### Historical Backfill
-
-- [ ] R15: Generate digest + reflection for all days Feb 7 → Mar 1 (24 days)
-- [ ] R16: 22:30 SGT as universal cycle boundary for backfill
-- [ ] R17: No Boyang recap in historical documents (system didn't exist)
-- [ ] R18: Historical documents marked with `status: backfill`, `backfill: true`
-- [ ] R19: Process chronologically (oldest first) for correct cumulative deduplication
-- [ ] R20: No overwrites — skip dates that already have digest files
-
----
-
-## Tasks
-
-### Phase 1: Infrastructure Setup
-
-- [ ] T1: Create directory structure: `memory/facts/`, `memory/decisions/`
-- [ ] T2: Create seed files: `memory/feedback-lessons.md`, `memory/compliments.md`, `memory/ideas.md`
-- [ ] T3: Write the reflection prompt template (the master prompt sent to the Opus sub-agent)
-- [ ] T4: Write `scripts/nightly-reflection.py` — data collection + sub-agent orchestration script
-- [ ] T5: Write `scripts/backfill-reflection.py` — batch runner for historical backfill
-
-### Phase 2: CLAW 008 Integration
-
-- [ ] T6: Update `procedures/daily-digest.md` with the reflection step
-- [ ] T7: Add goodnight trigger detection to CLAW 008's digest procedure
-- [ ] T8: Test the full flow: digest → recap → goodnight → reflection → report
-
-### Phase 3: Extraction Logic (in the sub-agent prompt)
-
-- [ ] T9: Implement extraction for each of the 8 categories
-- [ ] T10: Implement deduplication logic (check existing files before adding)
-- [ ] T11: Implement the Obsidian append logic (add reflection section to digest)
-- [ ] T12: Implement git commit + push after successful extraction
-
-### Phase 4: Testing & Verification
-
-- [ ] T13: Dry run on yesterday's (2026-03-01) conversations — verify extraction quality
-- [ ] T14: Verify Obsidian file is correctly formatted and syncs
-- [ ] T15: Verify workspace files are correctly updated
-- [ ] T16: Verify git commit includes all changes
-- [ ] T17: Cost measurement — confirm Opus cost is within expected range (~$0.45/run)
-
-### Phase 5: Historical Backfill
-
-- [ ] T18: Run backfill for Feb 7 → Mar 1 (24 days, chronological order)
-- [ ] T19: Verify all 24 digest files created in Obsidian with correct formatting
-- [ ] T20: Verify workspace memory files populated with historical extractions
-- [ ] T21: Verify timestamp chain integrity (no gaps in coverage_from/coverage_to)
-- [ ] T22: Final git commit with all backfill results
-
----
-
-## Acceptance Criteria
-
-- [ ] AC1: Full end-to-end flow works: Boyang says goodnight → reflection sub-agent spawns → results in Obsidian + workspace
-- [ ] AC2: Reflection report is readable, well-formatted, and appears in Obsidian digest
-- [ ] AC3: Workspace files (memory/*, KANBAN.md, RULES.md, INCIDENTS.md) are correctly updated
-- [ ] AC4: No duplicate entries on re-run (idempotent)
-- [ ] AC5: RULES.md changes are sparse, cautious, and logged in reflection report
-- [ ] AC6: Total cost per nightly run ≤ $0.50 (Opus)
-- [ ] AC7: Reflection completes within 10 minutes
-- [ ] AC8: Historical backfill produces 24 digest files (Feb 7 → Mar 1) with correct formatting
-- [ ] AC9: All workspace memory files populated with historical extractions
-- [ ] AC10: Timestamp chain has zero gaps across all digest files
+**RULES.md / INCIDENTS.md policy:** Auto-apply but sparingly. Only when the correction is unambiguous. Every change logged in the reflection report for auditability. Boyang reviews in morning briefing.
 
 ---
 
@@ -448,116 +261,195 @@ After each reflection run, the following files may be modified:
 
 ### Overview
 
-Generate historical digest + reflection documents for ALL days with available transcript data, retroactively populating the workspace with extracted knowledge.
+Generate historical digest + reflection documents for all days with available transcript data.
 
-**Available data range:** 2026-02-07 to 2026-03-01 (24 days)
-- Transcript data exists from Feb 7 (Mac Mini migration date)
-- Feb 1-6 data was on VPS (currently inaccessible) — excluded from backfill
-- 88 transcript files across ~13 active sessions
+**Available data:** 88 transcript files. Earliest message: `2026-02-07T05:44:31Z` (13:44 SGT).
 
-### Backfill Rules (Strict)
+**Existing digest files:** Only Mar 1-2 (testing artifacts with `YYYY-MM-DD-HHMM` naming). No pre-existing digests for Feb 7-28.
 
-**Rule 1: Cycle boundaries use 22:30 SGT as universal cutoff.**
-- Day X's cycle: `2026-XX-XX T22:30:00+08:00` (previous day) → `2026-XX-XX T22:30:00+08:00` (current day)
-- Example: Feb 8's document covers Feb 7 22:30 → Feb 8 22:30
-- First document (Feb 7): covers from earliest available transcript timestamp → Feb 7 22:30
+### Cycle Definition
 
-**Rule 2: Historical documents have NO Boyang recap.**
-- The recap feature didn't exist during this period
-- `## 📝 Boyang's Day Recap` section reads: `_No recap — historical backfill. Recap system started [date]._`
-- `status: backfill` (not `draft` or `final`)
+**Universal cycle boundary: 22:30 SGT** (matches `DIGEST_HOUR`/`DIGEST_MINUTE` in `config.py`).
 
-**Rule 3: Historical documents DO get full conversation content + reflection.**
-- Conversations are collected and formatted identically to current digests
-- Reflection extraction runs on each day's conversations
-- All 8 extraction categories apply
+| Day's Document | coverage_from | coverage_to |
+|---------------|---------------|-------------|
+| Feb 7 (first) | Earliest available message (Feb 7 13:44 SGT) | Feb 7 22:30 SGT |
+| Feb 8 | Feb 7 22:30 SGT | Feb 8 22:30 SGT |
+| ... | previous day 22:30 | current day 22:30 |
+| Mar 1 (last backfill) | Feb 28 22:30 SGT | Mar 1 22:30 SGT |
 
-**Rule 4: Historical documents are clearly marked.**
-- YAML frontmatter includes: `backfill: true`, `backfill_at: "ISO8601 timestamp"`
-- Status is `backfill`, never `final`
-
-**Rule 5: Extracted items are tagged with their source date.**
-- Facts, lessons, decisions etc. are filed under the correct historical date
-- `memory/facts/2026-02-08.md` contains facts from Feb 8's conversations
-- `memory/feedback-lessons.md` entries include the date they occurred
-
-**Rule 6: No overwrites.**
-- If a digest file already exists for a date, skip it (don't overwrite)
-- If workspace entries already exist from manual documentation, don't duplicate
-
-**Rule 7: Backfill processes days chronologically (oldest first).**
-- This ensures cumulative knowledge builds correctly
-- Deduplication works against all previously extracted items
-
-### Backfill Execution Plan
-
-```
-For each day from 2026-02-07 to 2026-03-01 (chronological order):
-  1. Define cycle: previous day 22:30 → current day 22:30 SGT
-  2. Collect all transcript messages within cycle (same logic as daily-digest.py)
-  3. Generate digest document (conversations only, no recap)
-  4. Spawn Opus sub-agent for reflection extraction
-  5. Sub-agent extracts all 8 categories → writes to workspace files
-  6. Append reflection report to the digest document
-  7. Save digest to Obsidian: Doudou-Digest/YYYY-MM-DD.md
-  8. Git commit workspace changes: "nightly-reflection: backfill YYYY-MM-DD"
-  9. Brief pause between days (rate limiting, context reset)
-```
+- **Feb 7 is partial** — coverage starts from earliest message, not midnight or previous 22:30
+- **Mar 1 is the last backfill day** — Mar 2 onward has the live system
+- **Total: 23 documents** (Feb 7 through Mar 1)
 
 ### Backfill Document Format
 
+Each backfill document follows the same v2 format, with additions:
+
 ```yaml
 ---
-date: 2026-02-08
-day: Saturday
-generated_at: "2026-03-02T23:00:00+08:00"      # when backfill ran
-coverage_from: "2026-02-07T22:30:00+08:00"
-coverage_to: "2026-02-08T22:30:00+08:00"
-status: backfill
+generated_at: "2026-03-03T01:00:00+08:00"    # when backfill ran
+coverage_from: "2026-02-07T13:44:31+08:00"
+coverage_to: "2026-02-07T22:30:00+08:00"
+status: backfill                               # NOT "final" — no /sleep was sent
 backfill: true
-backfill_at: "2026-03-02T23:00:00+08:00"
-reflection_at: "2026-03-02T23:05:00+08:00"
-reflection_model: "opus"
+backfill_at: "2026-03-03T01:00:00+08:00"
+reflection_at: "2026-03-03T01:05:00+08:00"
+reflection_model: opus
 ---
 
-# February 8, 2026 — Saturday
+# Doudou's Summary
+[per-session summaries, same as live format]
 
-## 🌃 Previous Night
-[conversations from Feb 7 22:30 to Feb 8 00:00]
-
-## 🗣️ Today's Conversations
-[conversations from Feb 8 00:00 to Feb 8 22:30]
-
-## 📝 Boyang's Day Recap
+# Boyang's Recap
 _No recap — historical backfill. Recap system started March 2026._
 
-## 🪞 Nightly Reflection
+# 🪞 Nightly Reflection
 [full 8-category extraction]
 ```
+
+### Backfill Rules (Strict)
+
+1. **Cycle boundary = 22:30 SGT** (from `config.py` `DIGEST_HOUR`/`DIGEST_MINUTE`)
+2. **No Boyang recap** — the recap system didn't exist. Section reads: `_No recap — historical backfill._`
+3. **Status = "backfill"** — never "active" or "final" (no real `/sleep` was sent)
+4. **YAML includes `backfill: true`** — machine-readable flag
+5. **Full summaries + reflection** — same quality as live documents
+6. **No overwrites** — skip any date that already has a digest file
+7. **Process chronologically (oldest first)** — correct cumulative deduplication
+8. **File naming:** `YYYY-MM-DD-2230.md` (uniform, since 22:30 is the cycle boundary)
+9. **Feb 7 is partial:** coverage_from = earliest message, coverage_to = 22:30 SGT
+10. **Extracted items tagged with source date** — `memory/facts/2026-02-08.md` for Feb 8's facts
+
+### Backfill Script
+
+`scripts/backfill.py` — standalone script that:
+1. Iterates dates Feb 7 → Mar 1 chronologically
+2. For each date: defines cycle, collects messages via `collector.py`, composes summaries via `llm.py`
+3. Spawns Opus sub-agent for reflection extraction (same prompt as live)
+4. Writes digest file to Obsidian vault
+5. Commits workspace changes: `"nightly-reflection: backfill YYYY-MM-DD"`
+6. Pauses between days (rate limiting)
 
 ### Backfill Cost Estimate
 
 | Item | Calculation | Cost |
 |------|-------------|------|
-| 24 days × Opus sub-agent | 24 × ~$0.45 | ~$10.80 |
-| Conversation data collection | Python script | $0.00 |
-| Git operations | Shell | $0.00 |
-| **Total backfill** | | **~$10.80** |
+| 23 days × LLM summary | 23 × ~$0.30 (Sonnet via llm.py) | ~$6.90 |
+| 23 days × Opus reflection | 23 × ~$1.50 (75K in, 5K out) | ~$34.50 |
+| **Total backfill** | | **~$41.40** |
 
 ---
 
-## Decisions Log (Resolved)
+## New Files in Digest Repo
 
-All open questions have been resolved by Boyang (2026-03-02 22:08):
+| File | Purpose |
+|------|---------|
+| `reflection.py` | Reflection orchestration — collect data, spawn Opus agent, parse results |
+| `scripts/backfill.py` | Historical backfill runner |
+| `tests/test_reflection.py` | Unit + integration tests for reflection |
+| `specs/SPEC.md` | Amendment: SPEC-STRUCT-04 (third section: `# 🪞 Nightly Reflection`) |
 
-| Question | Decision | Rationale |
-|----------|----------|-----------|
-| Execution model | Sub-agent | Reusability for backfill; clean context |
-| Model | Opus always | Quality matters for persistent knowledge |
-| RULES.md safety | Auto-apply, sparingly | Less friction; caution built into extraction prompt |
-| Fallback timing | None | Document seals naturally when session concludes |
-| KANBAN auto-add | Direct add | Reduce friction |
-| Historical backfill | YES | 24 days of data (Feb 7 → Mar 1); valuable retroactive knowledge |
+## New Files in Workspace
+
+| File | Purpose |
+|------|---------|
+| `memory/facts/` | Directory for daily fact files |
+| `memory/decisions/` | Directory for daily decision files |
+| `memory/feedback-lessons.md` | Append-only feedback/correction log |
+| `memory/compliments.md` | Append-only positive feedback log |
+| `memory/ideas.md` | Append-only idea capture |
+| `templates/reflection-prompt.md` | The master prompt sent to Opus sub-agent |
+
+---
+
+## Requirements
+
+### Core
+
+- [ ] R1: Trigger = `/sleep` command (existing handler, extended)
+- [ ] R2: Conversation collection reuses `collector.py` with cycle boundaries from active digest
+- [ ] R3: 8-category extraction via Opus sub-agent
+- [ ] R4: Each category stored in its designated workspace location
+- [ ] R5: Deduplication — check existing files before adding (sub-agent reads existing memory files)
+- [ ] R6: Reflection report appended to digest document as `# 🪞 Nightly Reflection`
+- [ ] R7: Document finalized (status="final") AFTER reflection completes
+- [ ] R8: Git commit + push after workspace changes
+- [ ] R9: Idempotent — running twice produces no duplicates
+- [ ] R10: Auditable — report shows exactly what was extracted and where stored
+
+### Model & Execution
+
+- [ ] R11: Model is always Opus
+- [ ] R12: Uses `openclaw agent --local` subprocess pattern (same as `llm.py`)
+- [ ] R13: Conversations saved to file, agent reads via `read` tool (same as `compose_summary`)
+
+### Error Handling
+
+- [ ] R14: If reflection sub-agent fails, still finalize the document (never block `/sleep`)
+- [ ] R15: Log errors to `/tmp/digest-bot.log`
+- [ ] R16: Send error message to Boyang via Telegram if reflection fails
+
+### Spec Amendments
+
+- [ ] R17: Add SPEC-STRUCT-04 to `specs/SPEC.md` — third section `# 🪞 Nightly Reflection`
+- [ ] R18: Update SPEC-STRUCT-01 to say "two or three sections" (reflection is optional)
+
+### Historical Backfill
+
+- [ ] R19: Backfill script processes Feb 7 → Mar 1 (23 days, chronological)
+- [ ] R20: 22:30 SGT cycle boundary (from config.py constants)
+- [ ] R21: Feb 7 partial coverage (earliest message → 22:30)
+- [ ] R22: No Boyang recap in backfill documents
+- [ ] R23: Status = "backfill", YAML includes `backfill: true`
+- [ ] R24: No overwrites of existing digest files
+- [ ] R25: Workspace changes committed per-day
+
+---
+
+## Tasks
+
+### Phase 1: Infrastructure
+
+- [ ] T1: Create workspace directories: `memory/facts/`, `memory/decisions/`
+- [ ] T2: Create seed files: `memory/feedback-lessons.md`, `memory/compliments.md`, `memory/ideas.md`
+- [ ] T3: Write reflection prompt template: `templates/reflection-prompt.md`
+- [ ] T4: Write `reflection.py` — data collection, sub-agent orchestration, result parsing
+- [ ] T5: Amend `specs/SPEC.md` with SPEC-STRUCT-04
+
+### Phase 2: Integration
+
+- [ ] T6: Modify `cmd_sleep` in `main.py` to call `run_reflection()` before `finalize()`
+- [ ] T7: Modify `recorder.py` — add `append_reflection()` function (follows `append_recap` pattern)
+- [ ] T8: Write tests: `tests/test_reflection.py`
+
+### Phase 3: Testing
+
+- [ ] T9: Unit tests for reflection parsing, prompt building, result formatting
+- [ ] T10: Integration test: mock `openclaw agent` call, verify workspace writes
+- [ ] T11: Live test: run on today's conversations, verify extraction quality
+- [ ] T12: Verify atomic write pattern works for reflection append (no sync conflict)
+
+### Phase 4: Backfill
+
+- [ ] T13: Write `scripts/backfill.py`
+- [ ] T14: Dry run on one day (Feb 8) — verify document format and extraction quality
+- [ ] T15: Run full backfill (23 days, chronological)
+- [ ] T16: Verify all 23 digest files + workspace memory files
+- [ ] T17: Verify timestamp chain integrity
+
+---
+
+## Acceptance Criteria
+
+- [ ] AC1: `/sleep` triggers reflection → results in Obsidian + workspace → then finalizes
+- [ ] AC2: If reflection fails, `/sleep` still finalizes (graceful degradation)
+- [ ] AC3: Reflection report is readable and well-formatted in Obsidian
+- [ ] AC4: Workspace files correctly updated with no duplicates
+- [ ] AC5: RULES.md auto-applied changes are sparse and logged
+- [ ] AC6: All new tests pass + existing 271 tests still pass
+- [ ] AC7: Backfill produces 23 documents (Feb 7 → Mar 1)
+- [ ] AC8: Total cost per nightly run ≤ $2.00
 
 ---
 
@@ -565,29 +457,37 @@ All open questions have been resolved by Boyang (2026-03-02 22:08):
 
 ### Nightly Run (Ongoing)
 
-| Component | Model | Tokens (est.) | Cost (est.) |
-|-----------|-------|---------------|-------------|
-| Conversation data prep | Python script | 0 | $0.00 |
-| Extraction sub-agent | Opus ($15/$75 per 1M) | ~15K input, ~3K output | ~$0.45 |
-| Git operations | Shell | 0 | $0.00 |
-| **Total per nightly run** | | | **~$0.45** |
-| **Monthly (30 days)** | | | **~$13.50** |
+| Component | Model | Est. Tokens | Cost |
+|-----------|-------|-------------|------|
+| Conversation data prep | Python | 0 | $0.00 |
+| Reflection sub-agent | Opus ($15/$75 per 1M) | ~75K in, ~5K out | ~$1.50 |
+| **Per nightly run** | | | **~$1.50** |
+| **Monthly (30 days)** | | | **~$45.00** |
 
 ### Historical Backfill (One-time)
 
 | Component | Calculation | Cost |
 |-----------|-------------|------|
-| 24 daily reflections | 24 × $0.45 | ~$10.80 |
-| **Total backfill** | | **~$10.80** |
-
-### Total Year 1
-
-| Component | Cost |
-|-----------|------|
-| Backfill (one-time) | $10.80 |
-| Nightly runs (12 months) | $162.00 |
-| **Annual total** | **~$172.80** |
+| 23 summaries via Sonnet | 23 × $0.30 | ~$6.90 |
+| 23 reflections via Opus | 23 × $1.50 | ~$34.50 |
+| **Total backfill** | | **~$41.40** |
 
 ---
 
-*PRD version 1.0 — 2026-03-02 — Doudou 🦮*
+## Decisions Log
+
+| Question | Decision | Rationale |
+|----------|----------|-----------|
+| Trigger mechanism | `/sleep` command only | That's what the code does. No verbal detection. |
+| Execution model | Sub-agent via `openclaw agent --local` | Matches `llm.py` pattern. Reusable for backfill. |
+| Model | Opus always | Quality matters for persistent knowledge |
+| RULES.md safety | Auto-apply, sparingly | Boyang's preference. Every change logged. |
+| Fallback timer | None | Document seals when `/sleep` sent. |
+| KANBAN auto-add | Direct add | Reduce friction |
+| Obsidian sync conflict | Use existing atomic write pattern | `recorder.py`'s `.tmp` → `os.rename` has been working |
+| Backfill range | Feb 7 → Mar 1 (23 days) | Earliest transcript: Feb 7 13:44 SGT |
+| Code location | `~/digest-bot/` (this repo) | Feature of the digest bot, not the workspace |
+
+---
+
+*PRD version 2.0 — 2026-03-02 — Rewritten from actual codebase, not hallucination. 🦮*
