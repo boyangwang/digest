@@ -257,7 +257,7 @@ async def cmd_digest(update, context):
 
 
 async def handle_text(update, context):
-    """Text → append recap + re-collect new conversations."""
+    """Text → append recap + re-collect new conversations + report status."""
     text = update.message.text
     if not text or not has_active_file():
         return
@@ -270,16 +270,34 @@ async def handle_text(update, context):
     # Re-collect new conversations since last coverage_to
     status = get_active_status()
     last_coverage = status.get("coverage_to")
-    if last_coverage:
-        try:
-            since_ts = datetime.fromisoformat(str(last_coverage))
-            now = datetime.now(SGT)
-            session_summaries, total = _build_session_summaries(since_ts)
-            if total > 0:
-                update_digest(new_coverage_to=now, session_summaries=session_summaries)
-                logger.info("Advanced coverage with %d new messages." % total)
-        except Exception as e:
-            logger.warning("Re-collect on text failed: %s" % e)
+    if not last_coverage:
+        await _send_to_boyang("⚠️ No coverage_to found — cannot collect.")
+        return
+
+    try:
+        since_ts = datetime.fromisoformat(str(last_coverage))
+        now = datetime.now(SGT)
+        session_summaries, total = _build_session_summaries(since_ts)
+
+        if total > 0:
+            update_digest(new_coverage_to=now, session_summaries=session_summaries)
+            logger.info("Advanced coverage with %d new messages." % total)
+
+            # Build and send status message
+            since_str = since_ts.strftime("%H:%M")
+            now_str = now.strftime("%H:%M")
+            session_names = [e["session"] for e in session_summaries]
+            status_msg = "📬 +%d msgs (%s→%s) %s" % (
+                total, since_str, now_str, ", ".join(session_names),
+            )
+            await _send_to_boyang(status_msg)
+        else:
+            await _send_to_boyang("📭 0 new messages since %s" % (
+                since_ts.strftime("%H:%M"),
+            ))
+    except Exception as e:
+        logger.error("Re-collect on text failed: %s" % e)
+        await _send_to_boyang("❌ Collection failed: %s" % e)
 
 
 async def handle_voice(update, context):

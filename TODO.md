@@ -33,12 +33,13 @@ next scheduled 22:30 collection.
 **Issue:** Bot token `8324650609:AAGeTNX2...` is in git history (commits
 `662c5ee`, `52fa822`). Public repo = anyone can find it.
 
+**Status:** Needs Boyang to `/revoke` in BotFather (user account required).
+
 **Fix:**
-1. Revoke token via BotFather `/revoke`
-2. Generate new token
-3. Update: `.env`, LaunchAgent plist, `.secrets.env`
-4. Restart bot
-5. Consider `git filter-branch` or BFG to scrub history
+1. Boyang: @BotFather → `/revoke` → select @sleep_digest_bot → new token
+2. Update: `.env`, LaunchAgent plist, `.secrets.env`
+3. Restart bot
+4. Scrub git history with BFG Repo-Cleaner
 
 ---
 
