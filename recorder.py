@@ -336,6 +336,45 @@ def append_voice_recap(audio_filename, transcript):
         return False
 
 
+def append_reflection(report_text, filepath=None):
+    """Append nightly reflection section to digest document (SPEC-REFLECT-02).
+
+    The reflection section is appended AFTER all existing content (after # Boyang's Recap).
+    Idempotent: if reflection section already exists, returns True without duplicating (SPEC-REFLECT-06).
+    Adds reflection_at and reflection_model to YAML frontmatter (SPEC-REFLECT-04).
+
+    Args:
+        report_text: Markdown text starting with "# 🪞 Nightly Reflection"
+        filepath: Path to digest file (default: _active_file)
+
+    Returns True on success, False on failure.
+    """
+    target = filepath if filepath else _active_file
+    if not target or not target.exists():
+        return False
+
+    try:
+        content = target.read_text(encoding="utf-8")
+        fm, body = _parse_frontmatter(content)
+
+        # SPEC-REFLECT-06: Idempotent — skip if already present
+        if "🪞 Nightly Reflection" in body:
+            return True
+
+        # SPEC-REFLECT-04: Add YAML fields
+        fm["reflection_at"] = datetime.now(SGT).isoformat()
+        fm["reflection_model"] = "opus"
+
+        # SPEC-REFLECT-02: Append after all existing content
+        body = body.rstrip() + "\n\n" + report_text.rstrip() + "\n"
+
+        new_content = _serialize_frontmatter(fm, body)
+        _atomic_write(target, new_content)
+        return True
+    except Exception:
+        return False
+
+
 def finalize():
     """Finalize the active digest (/sleep received).
 
