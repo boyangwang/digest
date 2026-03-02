@@ -44,12 +44,12 @@ Bot restarts create empty 394-byte digest files with `status: active` that never
 
 ## Tasks
 
-- [ ] **T1.** Fix the pytest-asyncio configuration so `@pytest.mark.asyncio` tests actually run as async (not skipped/failed due to missing event loop). Check pytest.ini.
-- [ ] **T2.** Fix the mock user ID issue in test fixtures — ensure `_check_user` returns `(True, False)` for the test user. The tests mock `from_user.id = 411364623` which IS Boyang's real ID. Check that `config.ALLOWED_USER_IDS` includes this ID during tests, or mock `_check_user` / `_is_allowed`.
-- [ ] **T3.** Make all 8 existing tests in `test_text_recollection.py` pass by fixing the actual `handle_text` function in `main.py`. The re-collection code path must: (a) call `_build_session_summaries`, (b) call `update_digest`, (c) send summary via `_send_to_boyang`, (d) handle 0-message case, (e) handle exceptions. The tests define expected behavior — read them carefully.
-- [ ] **T4.** Write `tests/test_orphan_cleanup.py` with tests for orphan file detection and cleanup on startup. Tests must verify: (a) `recover_active_on_startup` cleans up files with `status: active` + no summary content + older than 1 hour, (b) real active files with content are NOT cleaned up, (c) finalized files are NOT touched.
-- [ ] **T5.** Implement orphan cleanup in `recorder.py` `recover_active_on_startup()`. After recovering the valid active file, scan for other `status: active` files that are empty (no summary content after "# Doudou's Summary") and older than 1 hour — auto-finalize them as `status: stale`.
-- [ ] **T6.** Verify ALL existing tests still pass (the full suite minus known-broken e2e/scheduler tests). Run: `python3 -m pytest tests/ --ignore=tests/test_e2e.py --ignore=tests/test_nudge_bug.py --ignore=tests/test_scheduler.py -v`
+- [x] **T1.** Fix the pytest-asyncio configuration so `@pytest.mark.asyncio` tests actually run as async (not skipped/failed due to missing event loop). Check pytest.ini.
+- [x] **T2.** Fix the mock user ID issue in test fixtures — ensure `_check_user` returns `(True, False)` for the test user. The tests mock `from_user.id = 411364623` which IS Boyang's real ID. Check that `config.ALLOWED_USER_IDS` includes this ID during tests, or mock `_check_user` / `_is_allowed`.
+- [x] **T3.** Make all 8 existing tests in `test_text_recollection.py` pass by fixing the actual `handle_text` function in `main.py`. The re-collection code path must: (a) call `_build_session_summaries`, (b) call `update_digest`, (c) send summary via `_send_to_boyang`, (d) handle 0-message case, (e) handle exceptions. The tests define expected behavior — read them carefully.
+- [x] **T4.** Write `tests/test_orphan_cleanup.py` with tests for orphan file detection and cleanup on startup. Tests must verify: (a) `recover_active_on_startup` cleans up files with `status: active` + no summary content + older than 1 hour, (b) real active files with content are NOT cleaned up, (c) finalized files are NOT touched.
+- [x] **T5.** Implement orphan cleanup in `recorder.py` `recover_active_on_startup()`. After recovering the valid active file, scan for other `status: active` files that are empty (no summary content after "# Doudou's Summary") and older than 1 hour — auto-finalize them as `status: stale`.
+- [x] **T6.** Verify ALL existing tests still pass (the full suite minus known-broken e2e/scheduler tests). Run: `python3 -m pytest tests/ --ignore=tests/test_e2e.py --ignore=tests/test_nudge_bug.py --ignore=tests/test_scheduler.py -v`
 
 ## Acceptance Criteria
 
