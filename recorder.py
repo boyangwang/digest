@@ -232,6 +232,72 @@ def append_recap(text):
         return False
 
 
+def append_image_recap(image_filename, caption=None):
+    """Append an image entry to the active digest.
+
+    Format:
+      **HH:MM** 📷 ![[img-YYYYMMDD-HHMMSS.jpg]]
+      Caption text here (if provided)
+
+    Returns True on success, False if no active file.
+    """
+    if not has_active_file():
+        return False
+
+    try:
+        content = _active_file.read_text(encoding="utf-8")
+        fm, body = _parse_frontmatter(content)
+
+        now = datetime.now(SGT)
+        time_str = now.strftime("%H:%M")
+
+        entry = "\n**%s** 📷 ![[%s]]" % (time_str, image_filename)
+        if caption:
+            entry += "\n%s" % caption
+        entry += "\n"
+
+        body = body.rstrip() + "\n" + entry
+
+        new_content = _serialize_frontmatter(fm, body)
+        _atomic_write(_active_file, new_content)
+        return True
+    except Exception:
+        return False
+
+
+def append_file_recap(filename, caption=None):
+    """Append a file/document entry to the active digest.
+
+    Format:
+      **HH:MM** 📎 ![[filename.ext]]
+      Caption text here (if provided)
+
+    Returns True on success, False if no active file.
+    """
+    if not has_active_file():
+        return False
+
+    try:
+        content = _active_file.read_text(encoding="utf-8")
+        fm, body = _parse_frontmatter(content)
+
+        now = datetime.now(SGT)
+        time_str = now.strftime("%H:%M")
+
+        entry = "\n**%s** 📎 ![[%s]]" % (time_str, filename)
+        if caption:
+            entry += "\n%s" % caption
+        entry += "\n"
+
+        body = body.rstrip() + "\n" + entry
+
+        new_content = _serialize_frontmatter(fm, body)
+        _atomic_write(_active_file, new_content)
+        return True
+    except Exception:
+        return False
+
+
 def append_voice_recap(audio_filename, transcript):
     """Append a voice message entry to the active digest (SPEC-VOICE-03).
 

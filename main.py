@@ -54,6 +54,8 @@ from recorder import (
     update_digest,
     append_recap,
     append_voice_recap,
+    append_image_recap,
+    append_file_recap,
     finalize,
     has_active_file,
     get_active_status,
@@ -598,6 +600,7 @@ async def handle_voice(update, context):
 
 
 async def handle_photo(update, context):
+    """Download photo, save to vault attachments, record in digest."""
     allowed, is_test = _check_user(update)
     if not allowed:
         return
@@ -608,9 +611,78 @@ async def handle_photo(update, context):
 
     if not has_active_file():
         return
-    caption = update.message.caption or "[Photo]"
-    append_recap("📷 %s" % caption)
-    await update.message.reply_text("✍️")
+
+    try:
+        # Get the largest photo (last in the array)
+        photo = update.message.photo[-1]
+        file = await context.bot.get_file(photo.file_id)
+
+        # Save to vault attachments
+        ATTACHMENTS_DIR.mkdir(parents=True, exist_ok=True)
+        now = datetime.now(SGT)
+        image_filename = "img-%s.jpg" % now.strftime("%Y%m%d-%H%M%S")
+        image_path = ATTACHMENTS_DIR / image_filename
+
+        await file.download_to_drive(str(image_path))
+        logger.info("Saved image: %s (%d bytes)" % (image_filename, image_path.stat().st_size))
+
+        # Record in digest
+        caption = update.message.caption or None
+        append_image_recap(image_filename, caption)
+
+        await update.message.reply_text("📷 ✍️")
+
+    except Exception as e:
+        logger.error("Photo handling error: %s" % e)
+        await update.message.reply_text("📷 ❌ Error saving photo")
+
+
+async def handle_document(update, context):
+    """Download document/file, save to vault attachments, record in digest."""
+    allowed, is_test = _check_user(update)
+    if not allowed:
+        return
+
+    if is_test:
+        await update.message.reply_text("🧪 📎 Files not supported in test mode")
+        return
+
+    if not has_active_file():
+        return
+
+    try:
+        doc = update.message.document
+        if not doc:
+            return
+
+        file = await context.bot.get_file(doc.file_id)
+
+        # Use original filename if available, otherwise generate one
+        ATTACHMENTS_DIR.mkdir(parents=True, exist_ok=True)
+        now = datetime.now(SGT)
+
+        if doc.file_name:
+            # Keep original name, add timestamp prefix to avoid collisions
+            base = Path(doc.file_name)
+            filename = "file-%s-%s" % (now.strftime("%Y%m%d-%H%M%S"), base.name)
+        else:
+            ext = (doc.mime_type or "").split("/")[-1] or "bin"
+            filename = "file-%s.%s" % (now.strftime("%Y%m%d-%H%M%S"), ext)
+
+        file_path = ATTACHMENTS_DIR / filename
+
+        await file.download_to_drive(str(file_path))
+        logger.info("Saved file: %s (%d bytes)" % (filename, file_path.stat().st_size))
+
+        # Record in digest
+        caption = update.message.caption or None
+        append_file_recap(filename, caption)
+
+        await update.message.reply_text("📎 ✍️")
+
+    except Exception as e:
+        logger.error("Document handling error: %s" % e)
+        await update.message.reply_text("📎 ❌ Error saving file")
 
 
 # ============================================================
@@ -644,6 +716,7 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, handle_voice))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+    app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
 
     logger.info("Handlers registered. Polling...")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
