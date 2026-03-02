@@ -5,53 +5,34 @@
 
 ## Execution Order
 
-### Step 1: Discover test account user ID ⬜
-- [ ] 1a. Use Peekaboo to navigate Telegram Desktop to @sleep_digest_bot
-- [ ] 1b. Send a test message (e.g., "test_id_discovery")
-- [ ] 1c. Read `/tmp/digest-bot.log` to capture user_id from the Update
-- [ ] 1d. Record the user_id
+### Step 1: Discover test account user ID ✅
+- [x] 1a. Peekaboo: Telegram → search @sleep_digest_bot → START → send message
+- [x] 1b. Log shows: user_id=6805433372, @claw0606, name="mala"
+- [x] 1c. Updated config.py with TEST_USER_ID=6805433372
 
-### Step 2: Implement user filtering + test mode ⬜
-- [ ] 2a. Update `config.py`: TEST_USER_ID, ALLOWED_USER_IDS, TEST_DIGEST_DIR
-- [ ] 2b. Update `main.py`:
-  - Add `_is_allowed()` and `_is_test_user()` helpers
-  - Add filter to ALL handlers (commands + text + voice + photo)
-  - For test users: use TEST_DIGEST_DIR, skip LLM, prefix 🧪
-  - Key: test mode needs its OWN recorder state (separate from production)
-- [ ] 2c. Write `tests/test_user_filter.py` (unit tests for filtering logic)
-- [ ] 2d. Run unit tests → all pass
-- [ ] 2e. Restart bot, verify it starts clean
+### Step 2: Implement user filtering + test mode ✅
+- [x] 2a. config.py: TEST_USER_ID, ALLOWED_USER_IDS, TEST_DIGEST_DIR
+- [x] 2b. main.py: _check_user(), _is_allowed(), _is_test_user(), TestRecorder class
+- [x] 2c. tests/test_user_filter.py — 19 tests
+- [x] 2d. All 248 unit tests pass
+- [x] 2e. Bot restarts clean via `launchctl kickstart -k`
 
-### Step 3: Verify test mode works via Telegram UI ⬜
-- [ ] 3a. Send `/start` from Mac client → verify 🧪 prefix in reply
-- [ ] 3b. Send `/status` → verify test state (IDLE)
-- [ ] 3c. Send `/digest` → verify test file created in `_test/` dir
-- [ ] 3d. Send text message → verify ✍️ + test file updated
-- [ ] 3e. Send `/sleep` → verify test file finalized
-- [ ] 3f. Check that NO production files were touched
+### Step 3: Verify test mode works via Telegram UI ✅
+- [x] 3a-3f: Full cycle verified: /digest → text → /status → /sleep
+- [x] Test files in _test/, production untouched
 
-### Step 4: Build UI automation helper ⬜
-- [ ] 4a. Create `tests/telegram_ui.py` with Peekaboo-based functions:
-  - `send_message(text)` — type + Enter in active chat
-  - `read_last_reply()` — get bot's reply text
-  - `navigate_to_bot()` — search + click @sleep_digest_bot
-- [ ] 4b. Test the helper manually
+### Step 4: Build UI automation helper ✅
+- [x] 4a. tests/telegram_ui.py with Peekaboo functions
+- [x] 4b. Tested manually — works
 
-### Step 5: Integration tests ⬜
-- [ ] 5a. Create `tests/test_e2e.py`:
-  - test_start_command
-  - test_status_idle
-  - test_digest_creates_file
-  - test_text_appends_recap
-  - test_sleep_finalizes
-  - test_full_lifecycle
-- [ ] 5b. Each test: send via UI → wait → verify reply + file content
-- [ ] 5c. Run until all pass
+### Step 5: Integration tests ✅
+- [x] 5a. tests/test_live_e2e.py — 8 live tests
+- [x] 5b. All 8 pass (94s, UI automation is slow but reliable)
+- [x] Fixed YAML quoting bug in TestRecorder.finalize()
 
-### Step 6: Commit + push ⬜
-- [ ] 6a. Run full test suite (220+ existing + new)
-- [ ] 6b. Commit all changes
-- [ ] 6c. Push to github-digest
+### Step 6: Commit + push ✅
+- [x] 256 tests all passing
+- [x] Commit ce74466 pushed to github-digest
 
 ## Design Decisions
 
