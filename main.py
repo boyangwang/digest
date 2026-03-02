@@ -283,14 +283,15 @@ async def handle_text(update, context):
             update_digest(new_coverage_to=now, session_summaries=session_summaries)
             logger.info("Advanced coverage with %d new messages." % total)
 
-            # Build and send status message
+            # Build and send status + summary message
             since_str = since_ts.strftime("%H:%M")
             now_str = now.strftime("%H:%M")
-            session_names = [e["session"] for e in session_summaries]
-            status_msg = "📬 +%d msgs (%s→%s) %s" % (
-                total, since_str, now_str, ", ".join(session_names),
-            )
-            await _send_to_boyang(status_msg)
+            parts = ["📬 +%d msgs (%s→%s)\n" % (total, since_str, now_str)]
+            for entry in session_summaries:
+                parts.append("📌 *%s* (%d msgs)\n%s\n" % (
+                    entry["session"], entry["messages"], entry["summary"],
+                ))
+            await _send_to_boyang("\n".join(parts))
         else:
             await _send_to_boyang("📭 0 new messages since %s" % (
                 since_ts.strftime("%H:%M"),

@@ -138,7 +138,7 @@ class TestRecollectionRuns:
 # ============================================================
 
 class TestRecollectionStatusMessage:
-    """After text reply, bot MUST send a second message with collection status."""
+    """After text reply, bot MUST send a second message with collection status + summary."""
 
     @pytest.mark.asyncio
     async def test_text_reply_sends_collection_status(self, mock_sessions, active_digest):
@@ -180,13 +180,13 @@ class TestRecollectionStatusMessage:
 
             # Must have called reply_text at least twice:
             # 1. ✍️ acknowledgment
-            # 2. Collection status (or via _send_to_boyang)
+            # 2. Collection status with summary (via _send_to_boyang)
             all_calls = mock_message.reply_text.call_args_list
             bot_calls = mock_bot.send_message.call_args_list
 
             total_messages = len(all_calls) + len(bot_calls)
             assert total_messages >= 2, (
-                "Expected at least 2 messages (✍️ + status), got %d. "
+                "Expected at least 2 messages (✍️ + status+summary), got %d. "
                 "reply_text calls: %d, send_message calls: %d"
                 % (total_messages, len(all_calls), len(bot_calls))
             )
@@ -247,6 +247,64 @@ class TestRecollectionStatusMessage:
             assert any(c.isdigit() for c in combined), (
                 "Status message must contain a number (message count). Got: %s"
                 % combined[:300]
+            )
+        finally:
+            config.SESSION_DIR = orig_sd
+            config.SESSIONS_JSON = orig_sj
+            config.DIGEST_DIR = orig_dd
+            recorder._active_file = None
+            main_mod._app = None
+
+    @pytest.mark.asyncio
+    async def test_status_message_includes_summary(self, mock_sessions, active_digest):
+        """The follow-up message MUST include the LLM-composed summary, not just counts."""
+        sessions_dir, sessions_json = mock_sessions
+        digest_dir, filepath = active_digest
+
+        import config
+        import recorder
+        import main as main_mod
+
+        orig_sd = config.SESSION_DIR
+        orig_sj = config.SESSIONS_JSON
+        orig_dd = config.DIGEST_DIR
+        config.SESSION_DIR = sessions_dir
+        config.SESSIONS_JSON = sessions_json
+        config.DIGEST_DIR = digest_dir
+
+        recorder._active_file = filepath
+
+        try:
+            mock_message = AsyncMock()
+            mock_message.text = "Took Asher for a walk"
+            mock_message.reply_text = AsyncMock()
+            mock_update = MagicMock()
+            mock_update.message = mock_message
+            mock_context = MagicMock()
+
+            mock_bot = AsyncMock()
+            main_mod._app = MagicMock()
+            main_mod._app.bot = mock_bot
+
+            summary_text = "Evening conversation about the voice feature and ElevenLabs setup"
+            with patch("main.compose_summary", return_value=summary_text):
+                await main_mod.handle_text(mock_update, mock_context)
+
+            # Collect all text sent via _send_to_boyang
+            bot_texts = []
+            for call in mock_bot.send_message.call_args_list:
+                args = call[1] if call[1] else {}
+                text = args.get("text", "")
+                if not text and call[0]:
+                    text = str(call[0])
+                bot_texts.append(text)
+
+            combined = " ".join(bot_texts)
+
+            assert summary_text in combined, (
+                "Follow-up message must include the LLM summary. "
+                "Boyang wants to SEE the summary in Telegram, not just counts. "
+                "Got: %s" % combined[:500]
             )
         finally:
             config.SESSION_DIR = orig_sd
