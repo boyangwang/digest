@@ -167,6 +167,10 @@ class TestRecollectionStatusMessage:
 
             mock_update = MagicMock()
             mock_update.message = mock_message
+            mock_message.from_user = MagicMock()
+            mock_message.from_user.id = 411364623
+            mock_message.from_user.username = "b0yan913"
+            mock_message.from_user.first_name = "Boyang"
 
             mock_context = MagicMock()
 
@@ -225,6 +229,10 @@ class TestRecollectionStatusMessage:
 
             mock_update = MagicMock()
             mock_update.message = mock_message
+            mock_message.from_user = MagicMock()
+            mock_message.from_user.id = 411364623
+            mock_message.from_user.username = "b0yan913"
+            mock_message.from_user.first_name = "Boyang"
             mock_context = MagicMock()
 
             mock_bot = AsyncMock()
@@ -280,6 +288,10 @@ class TestRecollectionStatusMessage:
             mock_message.reply_text = AsyncMock()
             mock_update = MagicMock()
             mock_update.message = mock_message
+            mock_message.from_user = MagicMock()
+            mock_message.from_user.id = 411364623
+            mock_message.from_user.username = "b0yan913"
+            mock_message.from_user.first_name = "Boyang"
             mock_context = MagicMock()
 
             mock_bot = AsyncMock()
@@ -352,6 +364,10 @@ class TestCoverageAdvances:
             mock_message.reply_text = AsyncMock()
             mock_update = MagicMock()
             mock_update.message = mock_message
+            mock_message.from_user = MagicMock()
+            mock_message.from_user.id = 411364623
+            mock_message.from_user.username = "b0yan913"
+            mock_message.from_user.first_name = "Boyang"
             mock_context = MagicMock()
 
             mock_bot = AsyncMock()
@@ -405,6 +421,10 @@ class TestNoSilentFailure:
             mock_message.reply_text = AsyncMock()
             mock_update = MagicMock()
             mock_update.message = mock_message
+            mock_message.from_user = MagicMock()
+            mock_message.from_user.id = 411364623
+            mock_message.from_user.username = "b0yan913"
+            mock_message.from_user.first_name = "Boyang"
             mock_context = MagicMock()
 
             mock_bot = AsyncMock()
@@ -451,6 +471,10 @@ class TestNoSilentFailure:
             mock_message.reply_text = AsyncMock()
             mock_update = MagicMock()
             mock_update.message = mock_message
+            mock_message.from_user = MagicMock()
+            mock_message.from_user.id = 411364623
+            mock_message.from_user.username = "b0yan913"
+            mock_message.from_user.first_name = "Boyang"
             mock_context = MagicMock()
 
             mock_bot = AsyncMock()
@@ -518,6 +542,10 @@ class TestReproduceProductionBug:
             mock_message.reply_text = AsyncMock()
             mock_update = MagicMock()
             mock_update.message = mock_message
+            mock_message.from_user = MagicMock()
+            mock_message.from_user.id = 411364623
+            mock_message.from_user.username = "b0yan913"
+            mock_message.from_user.first_name = "Boyang"
             mock_context = MagicMock()
 
             mock_bot = AsyncMock()

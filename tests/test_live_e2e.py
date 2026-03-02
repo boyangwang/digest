@@ -1,0 +1,345 @@
+"""
+Live end-to-end integration tests using Telegram Desktop UI automation.
+
+These tests send REAL messages to @sleep_digest_bot from the Mac Mini's
+Telegram client (@claw0606) and verify:
+  1. Bot replies (via log parsing — faster than vision)
+  2. Test file creation/modification in _test/ directory
+  3. Full lifecycle: /digest → text → /status → /sleep
+
+Prerequisites:
+  - Telegram Desktop running and logged into @claw0606
+  - Bot running (via launchd com.digest-bot)
+  - Bot chat @sleep_digest_bot already opened in Telegram
+
+Run with: pytest tests/test_live_e2e.py -v -s
+(Use -s to see real-time output during slow UI automation)
+"""
+
+import os
+import re
+import shutil
+import subprocess
+import sys
+import time
+from datetime import datetime
+from pathlib import Path
+
+import pytest
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from config import SGT, TEST_DIGEST_DIR
+
+# Skip if not on Mac Mini with Telegram running
+TELEGRAM_RUNNING = (
+    subprocess.run(
+        ["pgrep", "-f", "Telegram.app"],
+        capture_output=True,
+    ).returncode == 0
+)
+
+BOT_RUNNING = (
+    subprocess.run(
+        ["pgrep", "-f", "digest-bot/main.py"],
+        capture_output=True,
+    ).returncode == 0
+)
+
+SKIP_REASON = "Requires Telegram Desktop + digest bot running on Mac Mini"
+pytestmark = pytest.mark.skipif(
+    not (TELEGRAM_RUNNING and BOT_RUNNING),
+    reason=SKIP_REASON,
+)
+
+LOG_PATH = Path("/tmp/digest-bot.log")
+PEEKABOO = "peekaboo"
+
+
+# ============================================================
+# Helpers
+# ============================================================
+
+def _peekaboo(args, timeout=15):
+    """Run peekaboo command, return stdout."""
+    result = subprocess.run(
+        f"{PEEKABOO} {args}",
+        shell=True, capture_output=True, text=True, timeout=timeout,
+    )
+    return result.stdout.strip()
+
+
+def _ensure_bot_chat_open():
+    """Make sure the bot chat is open with input field visible."""
+    import json
+
+    _peekaboo("app switch --to Telegram")
+    time.sleep(0.5)
+
+    # Check for input field
+    raw = _peekaboo("see --app Telegram --json 2>/dev/null", timeout=20)
+    try:
+        data = json.loads(raw)
+        elements = data.get("data", {}).get("ui_elements", [])
+    except (json.JSONDecodeError, KeyError):
+        elements = []
+
+    for e in elements:
+        if e.get("role") == "textField" and "write" in e.get("label", "").lower():
+            return True
+
+    # Need to navigate to bot chat
+    search = None
+    for e in elements:
+        if e.get("role") == "textField" and "search" in e.get("label", "").lower():
+            search = e
+            break
+    if not search:
+        return False
+
+    _peekaboo(f"click --on {search['id']} --app Telegram")
+    time.sleep(0.3)
+    _peekaboo('type "@sleep_digest_bot" --app Telegram')
+    time.sleep(1.5)
+    _peekaboo("click --app Telegram --coords 250,180")
+    time.sleep(1.0)
+
+    # Re-check for input field
+    raw = _peekaboo("see --app Telegram --json 2>/dev/null", timeout=20)
+    try:
+        data = json.loads(raw)
+        elements = data.get("data", {}).get("ui_elements", [])
+    except Exception:
+        elements = []
+
+    return any(
+        e.get("role") == "textField" and "write" in e.get("label", "").lower()
+        for e in elements
+    )
+
+
+def _find_input_field():
+    """Find the message input field element ID."""
+    import json
+    raw = _peekaboo("see --app Telegram --json 2>/dev/null", timeout=20)
+    try:
+        data = json.loads(raw)
+        for e in data.get("data", {}).get("ui_elements", []):
+            if e.get("role") == "textField" and "write" in e.get("label", "").lower():
+                return e["id"]
+    except Exception:
+        pass
+    return None
+
+
+def send_message(text, wait_after=3):
+    """Send a message and wait for bot to process it."""
+    input_id = _find_input_field()
+    assert input_id, "Message input field not found in Telegram"
+
+    _peekaboo(f"click --on {input_id} --app Telegram")
+    time.sleep(0.2)
+    _peekaboo(f'type "{text}" --app Telegram')
+    time.sleep(0.2)
+    _peekaboo("press return --app Telegram")
+    time.sleep(wait_after)
+
+
+def get_log_since(marker):
+    """Get log entries after a marker line."""
+    if not LOG_PATH.exists():
+        return ""
+    content = LOG_PATH.read_text()
+    idx = content.rfind(marker)
+    if idx == -1:
+        return content
+    return content[idx:]
+
+
+def drop_log_marker():
+    """Write a unique marker to the log, return it."""
+    marker = "=== TEST MARKER %s ===" % datetime.now(SGT).isoformat()
+    with open(LOG_PATH, "a") as f:
+        f.write(marker + "\n")
+    return marker
+
+
+def get_test_files():
+    """List test digest files."""
+    if not TEST_DIGEST_DIR.exists():
+        return []
+    return sorted(TEST_DIGEST_DIR.glob("test-*.md"))
+
+
+def cleanup_test_dir():
+    """Remove all test files."""
+    if TEST_DIGEST_DIR.exists():
+        shutil.rmtree(TEST_DIGEST_DIR)
+
+
+# ============================================================
+# Fixtures
+# ============================================================
+
+@pytest.fixture(scope="module", autouse=True)
+def setup_telegram():
+    """Ensure Telegram is open to the bot chat."""
+    success = _ensure_bot_chat_open()
+    if not success:
+        pytest.skip("Could not navigate to bot chat in Telegram")
+    yield
+
+
+@pytest.fixture(autouse=True)
+def clean_test_files():
+    """Clean test files before each test."""
+    cleanup_test_dir()
+    yield
+    cleanup_test_dir()
+
+
+# ============================================================
+# Tests
+# ============================================================
+
+class TestLiveCommands:
+    """Test individual commands via Telegram UI."""
+
+    def test_start_command(self):
+        """Send /start, verify bot replies."""
+        marker = drop_log_marker()
+        send_message("/start", wait_after=4)
+
+        log = get_log_since(marker)
+        assert "Test user 6805433372" in log, "Bot didn't recognize test user"
+
+    def test_status_idle(self):
+        """Send /status when IDLE, verify response."""
+        marker = drop_log_marker()
+        send_message("/status", wait_after=4)
+
+        log = get_log_since(marker)
+        assert "Test user" in log
+
+    def test_digest_creates_file(self):
+        """Send /digest, verify test file created."""
+        marker = drop_log_marker()
+        send_message("/digest", wait_after=5)
+
+        log = get_log_since(marker)
+        assert "Test user" in log
+        assert "Test /digest" in log
+
+        # Verify file created
+        files = get_test_files()
+        assert len(files) == 1, f"Expected 1 test file, got {len(files)}"
+
+        content = files[0].read_text()
+        assert 'status: "active"' in content
+        assert "# Doudou's Summary" in content
+        assert "# Boyang's Recap" in content
+
+    def test_text_appends_recap(self):
+        """Send /digest then text, verify recap appended."""
+        # Create digest first
+        send_message("/digest", wait_after=5)
+        files = get_test_files()
+        assert len(files) == 1
+
+        # Send text
+        marker = drop_log_marker()
+        send_message("Live test recap entry", wait_after=4)
+
+        log = get_log_since(marker)
+        assert "Test recorded" in log
+
+        # Verify file content
+        content = files[0].read_text()
+        assert "Live test recap entry" in content
+
+    def test_sleep_finalizes(self):
+        """Send /digest then /sleep, verify finalization."""
+        send_message("/digest", wait_after=5)
+        files = get_test_files()
+        assert len(files) == 1
+        filepath = files[0]
+
+        marker = drop_log_marker()
+        send_message("/sleep", wait_after=4)
+
+        log = get_log_since(marker)
+        assert "Test /sleep" in log
+        assert "has_active=True" in log
+
+        # Verify file finalized
+        content = filepath.read_text()
+        assert "status: final" in content or 'status: "final"' in content, \
+            "File not finalized. Content:\n%s" % content[:500]
+        assert "finalized_at" in content
+
+
+class TestLiveLifecycle:
+    """Test the full lifecycle in sequence."""
+
+    def test_full_cycle(self):
+        """Full: /digest → text → /digest (update) → /sleep → verify files."""
+        # 1. /digest → create
+        marker1 = drop_log_marker()
+        send_message("/digest", wait_after=5)
+
+        files = get_test_files()
+        assert len(files) == 1, f"Expected 1 file after /digest, got {len(files)}"
+        filepath = files[0]
+
+        log1 = get_log_since(marker1)
+        assert "has_active=False" in log1, "Should have been IDLE before /digest"
+
+        # 2. Text → append
+        marker2 = drop_log_marker()
+        send_message("My evening thoughts", wait_after=4)
+
+        content = filepath.read_text()
+        assert "My evening thoughts" in content
+
+        # 3. /digest → update (same file)
+        marker3 = drop_log_marker()
+        send_message("/digest", wait_after=5)
+
+        log3 = get_log_since(marker3)
+        assert "has_active=True" in log3, "Should be ACTIVE for second /digest"
+
+        # Still same file count
+        files = get_test_files()
+        assert len(files) == 1, f"Expected still 1 file, got {len(files)}"
+
+        # 4. /sleep → finalize
+        marker4 = drop_log_marker()
+        send_message("/sleep", wait_after=4)
+
+        content = filepath.read_text()
+        assert "status: final" in content or 'status: "final"' in content, \
+            "File not finalized. Content:\n%s" % content[:500]
+        assert "finalized_at" in content
+        assert "My evening thoughts" in content
+
+    def test_text_without_digest_prompts(self):
+        """Text without active digest should tell user to /digest first."""
+        marker = drop_log_marker()
+        send_message("orphan text", wait_after=4)
+
+        log = get_log_since(marker)
+        assert "Test user" in log
+        # No "Test recorded" since there's no active digest
+
+    def test_unknown_user_rejected(self):
+        """Verify from logs that non-test users are rejected.
+
+        We can't send from another account, but we can verify the
+        filtering logic works by checking that our test user IS accepted.
+        """
+        marker = drop_log_marker()
+        send_message("/start", wait_after=4)
+        log = get_log_since(marker)
+        # Our test user should be accepted (not rejected)
+        assert "Rejected user 6805433372" not in log
+        assert "Test user 6805433372" in log

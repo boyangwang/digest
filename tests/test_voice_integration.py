@@ -135,6 +135,10 @@ class TestFullVoiceHandler:
 
             mock_update = MagicMock()
             mock_update.message = mock_message
+            mock_message.from_user = MagicMock()
+            mock_message.from_user.id = 411364623
+            mock_message.from_user.username = "b0yan913"
+            mock_message.from_user.first_name = "Boyang"
 
             mock_context = MagicMock()
             mock_context.bot = AsyncMock()

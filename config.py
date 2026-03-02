@@ -17,10 +17,20 @@ if not BOT_TOKEN and __name__ != "__main__":
     pass
 BOYANG_USER_ID = 411364623  # Only process messages from Boyang
 
+# Test account (Doudou's Telegram client on Mac Mini, @claw0606, name: "mala")
+# Discovered 2026-03-02: user_id=6805433372
+TEST_USER_ID = int(os.environ.get("TEST_USER_ID", "6805433372"))
+
+# Allowlist: only these users can interact with the bot
+ALLOWED_USER_IDS = {BOYANG_USER_ID, TEST_USER_ID} - {0}
+
 # --- Paths ---
 VAULT_PATH = Path("/Users/claw/Documents/NotesVault")
 DIGEST_DIR = VAULT_PATH / "Artificial-Colloquia" / "Doudou-Digest"
 ATTACHMENTS_DIR = DIGEST_DIR / "attachments"
+
+# Test mode uses a separate directory to avoid contaminating production
+TEST_DIGEST_DIR = DIGEST_DIR / "_test"
 SESSION_DIR = Path.home() / ".openclaw" / "agents" / "main" / "sessions"
 SESSIONS_JSON = SESSION_DIR / "sessions.json"
 LOG_PATH = Path("/tmp/digest-bot.log")
