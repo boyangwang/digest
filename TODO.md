@@ -6,14 +6,13 @@
 
 ## Active
 
-| ID | PRD | Status | Summary | Next Step |
-|------|-----|--------|---------|-----------|
-| DIGEST-010 | [`prd-derived-sessions.md`](specs/prd-derived-sessions.md) | 🟡 Active | Derived session architecture — test coverage | Agent implementing T4+T8 |
+_(empty)_
 
 ## Completed
 
 | ID | PRD | Date | Summary |
 |------|-----|------|---------|
+| DIGEST-010 | [`prd-derived-sessions.md`](specs/prd-derived-sessions.md) | 2026-03-04 | Derived session architecture — 12 unit + 25 E2E all passing |
 | DIGEST-009 | [`prd-collection-engine.md`](docs/completed/prd-collection-engine.md) | 2026-03-03 | Parallel, retriable, supersedable collection engine |
 | DIGEST-008 | [`prd-singleton-guard.md`](docs/completed/prd-singleton-guard.md) | 2026-03-03 | PID lock singleton guard + 29 orphan files cleaned |
 | DIGEST-007 | [`prd-reflection-bugfix.md`](docs/completed/prd-reflection-bugfix.md) | 2026-03-03 | Reflection report + retry + /reflect — 19/19 tasks |
