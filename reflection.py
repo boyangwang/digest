@@ -83,7 +83,7 @@ workspace files to avoid duplicates (use memory_search or read the target files)
    Also: auto-apply to RULES.md if correction is clear and unambiguous.
 
 3. **rules_incidents** — Formalized rules, near-misses, mistakes, patterns to prevent.
-   Write to: INCIDENTS.md and/or RULES.md (sparingly, only when evidence is clear).
+   Write to: INCIDENTS.md ONLY. Do NOT modify RULES.md — propose rule changes in the JSON output instead.
 
 4. **compliments** — Positive feedback, things that went well, praise.
    Write to: memory/compliments.md (append with date header)
@@ -105,6 +105,7 @@ workspace files to avoid duplicates (use memory_search or read the target files)
 - Read the conversation file first, then extract.
 - For EACH category, check the target file for duplicates before adding.
 - Write all extracted items to the workspace files directly.
+- Do NOT modify RULES.md directly. Propose any rule changes in the JSON output.
 - Run: git add -A && git commit -m "nightly-reflection: %s" && git push origin main
 - Then return a JSON summary (and ONLY JSON, no other text) in this format:
 
@@ -137,7 +138,7 @@ def _get_env():
     return env
 
 
-def _call_agent(prompt: str, timeout: int = 300) -> str | None:
+def _call_agent(prompt: str, timeout: int = 1800) -> str | None:
     """Call the Opus agent for reflection. Returns response text or None."""
     try:
         result = subprocess.run(
