@@ -10,9 +10,11 @@ full conversation text using its normal toolchain.
 If Doudou is unavailable, falls back to a simple note. Bot never stops working.
 """
 
+import asyncio
 import json
 import logging
 import os
+import signal
 import subprocess
 import tempfile
 from datetime import datetime
@@ -133,3 +135,74 @@ def _fallback(conversations_text):
         "Summary pending.\n\n"
         "今日对话已记录（Boyang %d 条，Doudou %d 条）。摘要待生成。"
     ) % (boyang_count, doudou_count, boyang_count, doudou_count)
+
+
+async def async_compose_summary(conversations_text):
+    """Async version of compose_summary for parallel collection.
+    
+    Uses asyncio.create_subprocess_exec with start_new_session=True
+    for killable process groups.
+    """
+    if not conversations_text.strip():
+        return "_No conversations to summarize._\n\n_今天没有对话可以总结。_"
+
+    # Save to file
+    filepath = _save_conversations_to_file(conversations_text)
+
+    # Build prompt
+    prompt = (
+        "[DIGEST_SUMMARY_REQUEST]\n\n"
+        "Read the conversation transcript at: %s\n\n"
+        "Then compose a nightly summary for Boyang's sleep journal.\n"
+        "Write 2-4 paragraphs, bilingual (English then Chinese).\n"
+        "Warm, reflective journal tone — not a report.\n"
+        "No bullet points, no action items, no headers.\n"
+        "Just natural flowing narrative about what was discussed today.\n\n"
+        "Reply with ONLY the summary text. No preamble, no tool output, no explanations."
+    ) % filepath
+
+    try:
+        # Launch subprocess with start_new_session=True for killable process groups
+        proc = await asyncio.create_subprocess_exec(
+            "openclaw", "agent", "--local",
+            "--session-id", "digest-bot",
+            "--message", prompt,
+            "--json",
+            "--timeout", "180",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            start_new_session=True,  # Process group isolation for killability
+            env=_get_env(),
+        )
+
+        # Wait for completion
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=195)
+
+        if proc.returncode != 0:
+            logger.warning("Doudou call failed (rc=%d): %s" % (proc.returncode, stderr[:300].decode()))
+            return None
+
+        data = json.loads(stdout.decode())
+        payloads = data.get("payloads", [])
+        if payloads and payloads[0].get("text"):
+            text = payloads[0]["text"]
+            logger.info("Doudou responded: %d chars" % len(text))
+            return text
+
+        logger.warning("Doudou returned empty payloads")
+        return None
+
+    except asyncio.TimeoutError:
+        logger.warning("Doudou call timed out")
+        # Kill the process group
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+        except Exception:
+            pass
+        return None
+    except json.JSONDecodeError as e:
+        logger.warning("Doudou response not JSON: %s" % e)
+        return None
+    except Exception as e:
+        logger.warning("Doudou call exception: %s" % e)
+        return None

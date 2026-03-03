@@ -71,6 +71,7 @@ from reflection import run_reflection
 from scheduler import DigestScheduler
 from llm import compose_summary, compose_nudge
 from stt import transcribe
+from collection_engine import CollectionEngine
 
 
 # ============================================================
@@ -302,6 +303,7 @@ logger = logging.getLogger("digest-bot")
 _scheduler = DigestScheduler()
 _app = None
 _lock_fd = None  # Module-level — must stay open for process lifetime
+_engine = CollectionEngine()  # Collection engine for parallel, retriable, supersedable collection
 
 
 # ============================================================
@@ -424,34 +426,6 @@ async def _send_to_boyang(text):
                 logger.error("Send failed: %s" % e)
 
 
-def _build_session_summaries(since_ts):
-    """Collect messages, group by session, compose per-session summaries.
-
-    Returns (session_summaries, total_messages).
-    session_summaries: list of {"session": str, "messages": int, "summary": str}
-    """
-    prev_night, today_msgs = collect_all_messages(since_ts)
-    all_msgs = prev_night + today_msgs
-    total = len(all_msgs)
-
-    if total == 0:
-        return [], 0
-
-    session_groups = group_by_session(all_msgs)
-    session_summaries = []
-
-    for sess_name, msgs in sorted(session_groups.items()):
-        formatted = format_messages(msgs)
-        summary = compose_summary(formatted)
-        session_summaries.append({
-            "session": sess_name,
-            "messages": len(msgs),
-            "summary": summary,
-        })
-
-    return session_summaries, total
-
-
 def _build_telegram_message(session_summaries, total, is_update=False):
     """Build a clean Telegram message from session summaries."""
     now = datetime.now(SGT)
@@ -485,17 +459,21 @@ async def generate_digest():
         status = get_active_status()
         since_ts = datetime.fromisoformat(str(status.get("coverage_to", now.isoformat())))
 
-        session_summaries, total = _build_session_summaries(since_ts)
+        result = await _engine.collect(since_ts, trigger="scheduled")
 
-        if total == 0:
+        if result is None:
+            await _send_to_boyang("❌ Collection failed — will retry at next scheduled time.")
+            return
+
+        if result.total == 0:
             await _send_to_boyang("No new conversations since last update.")
             return
 
-        update_digest(new_coverage_to=now, session_summaries=session_summaries)
+        update_digest(new_coverage_to=result.coverage_to, session_summaries=result.summaries)
         _scheduler.mark_digest_generated()
-        logger.info("Updated active digest with %d new messages." % total)
+        logger.info("Updated active digest with %d new messages." % result.total)
 
-        msg = _build_telegram_message(session_summaries, total, is_update=True)
+        msg = _build_telegram_message(result.summaries, result.total, is_update=True)
         await _send_to_boyang(msg)
     else:
         # IDLE state: create new file
@@ -506,22 +484,27 @@ async def generate_digest():
         else:
             logger.info("Coverage from: %s" % since_ts.isoformat())
 
-        session_summaries, total = _build_session_summaries(since_ts)
-        logger.info("Collected %d messages across %d sessions." % (total, len(session_summaries)))
+        result = await _engine.collect(since_ts, trigger="scheduled")
 
-        if total == 0:
+        if result is None:
+            await _send_to_boyang("❌ Collection failed — will retry at next scheduled time.")
+            return
+
+        if result.total == 0:
             await _send_to_boyang("No conversations to digest.")
             return
 
+        logger.info("Collected %d messages across %d sessions." % (result.total, len(result.summaries)))
+
         create_digest(
             coverage_from=since_ts,
-            coverage_to=now,
-            session_summaries=session_summaries,
+            coverage_to=result.coverage_to,
+            session_summaries=result.summaries,
         )
         _scheduler.mark_digest_generated()
         logger.info("Digest created.")
 
-        msg = _build_telegram_message(session_summaries, total)
+        msg = _build_telegram_message(result.summaries, result.total)
         await _send_to_boyang(msg)
 
 
@@ -586,13 +569,26 @@ async def cmd_sleep(update, context):
 
     _scheduler.mark_sleep()
 
+    # DIGEST-009: Collect any remaining conversations (supersedes any running collection)
+    sleep_ts = datetime.now(SGT)
+    if has_active_file():
+        status = get_active_status()
+        last_coverage = status.get("coverage_to")
+        if last_coverage:
+            since_ts = datetime.fromisoformat(str(last_coverage))
+            # Collect (aborts any running collection — /sleep has higher priority)
+            result = await _engine.collect(since_ts, trigger="sleep")
+            if result and result.total > 0:
+                update_digest(new_coverage_to=sleep_ts, session_summaries=result.summaries)
+                logger.info("/sleep: advanced coverage with %d new messages" % result.total)
+
     # SPEC-REFLECT-01: Run reflection BEFORE finalize
     diff_images = []
     diff_info = {"stat": "", "patch": "", "files": [], "images": []}
     if has_active_file():
         await update.message.reply_text("晚安 🌙 Running reflection...")
         try:
-            # Collect conversations for this cycle
+            # Collect conversations for this cycle (full range for reflection)
             status = get_active_status()
             coverage_from = status.get("coverage_from")
             if coverage_from:
@@ -946,26 +942,29 @@ async def handle_text(update, context):
 
     try:
         since_ts = datetime.fromisoformat(str(last_coverage))
-        now = datetime.now(SGT)
-        session_summaries, total = _build_session_summaries(since_ts)
+        result = await _engine.collect(since_ts, trigger="text")
 
-        if total > 0:
-            update_digest(new_coverage_to=now, session_summaries=session_summaries)
-            logger.info("Advanced coverage with %d new messages." % total)
+        if result is None:
+            await _send_to_boyang("❌ Collection failed — will retry on next message")
+            return
 
-            # Build and send status + summary message
-            since_str = since_ts.strftime("%H:%M")
-            now_str = now.strftime("%H:%M")
-            parts = ["📬 +%d msgs (%s→%s)\n" % (total, since_str, now_str)]
-            for entry in session_summaries:
-                parts.append("📌 *%s* (%d msgs)\n%s\n" % (
-                    entry["session"], entry["messages"], entry["summary"],
-                ))
-            await _send_to_boyang("\n".join(parts))
-        else:
-            await _send_to_boyang("📭 0 new messages since %s" % (
-                since_ts.strftime("%H:%M"),
+        if result.total == 0:
+            await _send_to_boyang("📭 0 new messages since %s" % since_ts.strftime("%H:%M"))
+            return
+
+        update_digest(new_coverage_to=result.coverage_to, session_summaries=result.summaries)
+        logger.info("Advanced coverage with %d new messages." % result.total)
+
+        # Build and send status + summary message
+        since_str = since_ts.strftime("%H:%M")
+        now_str = result.coverage_to.strftime("%H:%M")
+        parts = ["📬 +%d msgs (%s→%s)\n" % (result.total, since_str, now_str)]
+        for entry in result.summaries:
+            parts.append("📌 *%s* (%d msgs)\n%s\n" % (
+                entry["session"], entry["messages"], entry["summary"],
             ))
+        await _send_to_boyang("\n".join(parts))
+
     except Exception as e:
         logger.error("Re-collect on text failed: %s" % e)
         await _send_to_boyang("❌ Collection failed: %s" % e)

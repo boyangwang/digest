@@ -17,43 +17,81 @@ from config import (
 
 
 def get_all_session_transcripts() -> list[tuple[str, Path]]:
-    """Get all active session transcript files with display names."""
+    """Get all active session transcript files with display names.
+    
+    DIGEST-009: Proper error handling with retry on JSONDecodeError.
+    """
     if not SESSIONS_JSON.exists():
         return []
 
-    try:
-        with open(SESSIONS_JSON) as f:
-            data = json.load(f)
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            with open(SESSIONS_JSON) as f:
+                data = json.load(f)
 
-        sessions = []
-        for key, entry in data.items():
-            sid = entry.get("sessionId", "")
-            label = entry.get("label", "")
-            # Skip cron sessions and sub-agent runs
-            if ":cron:" in key or ":run:" in key:
-                continue
-            if not sid:
-                continue
-            transcript = SESSION_DIR / f"{sid}.jsonl"
-            if not transcript.exists():
-                continue
+            sessions = []
+            for key, entry in data.items():
+                sid = entry.get("sessionId", "")
+                label = entry.get("label", "")
+                # Skip cron sessions and sub-agent runs
+                if ":cron:" in key or ":run:" in key:
+                    continue
+                if not sid:
+                    continue
+                transcript = SESSION_DIR / f"{sid}.jsonl"
+                if not transcript.exists():
+                    continue
 
-            # Determine display name
-            if "dm:" in key:
-                display = "DM with Boyang"
-            elif "group:" in key:
-                chat_id = key.split("group:")[-1]
-                display = GROUP_NAMES.get(chat_id, label or f"Group {chat_id}")
-            elif "direct:" in key:
-                display = "Direct with Boyang"
-            elif key == "agent:main:main":
-                display = "Webchat"
+                # Determine display name
+                if "dm:" in key:
+                    display = "DM with Boyang"
+                elif "group:" in key:
+                    chat_id = key.split("group:")[-1]
+                    display = GROUP_NAMES.get(chat_id, label or f"Group {chat_id}")
+                elif "direct:" in key:
+                    display = "Direct with Boyang"
+                elif key == "agent:main:main":
+                    display = "Webchat"
+                else:
+                    display = label or key
+                sessions.append((display, transcript))
+            return sessions
+
+        except json.JSONDecodeError as e:
+            # Retry on JSON errors (file may be mid-write)
+            if attempt < max_retries - 1:
+                import time
+                import logging
+                logger = logging.getLogger("digest-bot.collector")
+                logger.warning(
+                    "JSONDecodeError reading %s (attempt %d/%d): %s. Retrying in 0.5s..." % (
+                        SESSIONS_JSON, attempt + 1, max_retries, e
+                    )
+                )
+                time.sleep(0.5)
+                continue
             else:
-                display = label or key
-            sessions.append((display, transcript))
-        return sessions
-    except Exception:
-        return []
+                import logging
+                logger = logging.getLogger("digest-bot.collector")
+                logger.error("JSONDecodeError after %d attempts: %s" % (max_retries, e))
+                return []
+
+        except FileNotFoundError as e:
+            # File disappeared between exists() check and open() — log and return empty
+            import logging
+            logger = logging.getLogger("digest-bot.collector")
+            logger.warning("sessions.json vanished: %s" % e)
+            return []
+
+        except Exception as e:
+            # All other errors — log with details and return empty
+            import logging
+            logger = logging.getLogger("digest-bot.collector")
+            logger.error("Unexpected error reading sessions.json: %s" % e, exc_info=True)
+            return []
+
+    return []  # Should never reach here, but safety fallback
 
 
 def extract_user_text(raw_text: str) -> str:
