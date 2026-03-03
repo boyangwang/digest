@@ -11,6 +11,7 @@
 | # | PRD | Status | Summary | Tasks | Next Step |
 |---|-----|--------|---------|-------|-----------|
 | 1 | [`prd-reflection-bugfix.md`](specs/prd-reflection-bugfix.md) | 🔴 Draft | Reflection not sent to user + retry + `/reflect` command | 0/12 | Write failing tests (T1-T4) |
+| 2 | [`prd-singleton-guard.md`](specs/prd-singleton-guard.md) | 🔴 Draft | PID lock to prevent duplicate bot instances (root cause of orphan files + 23:22 crash) | 0/9 | Awaiting Boyang approval |
 
 ---
 
