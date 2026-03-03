@@ -11,23 +11,17 @@
 | # | PRD | Status | Summary | Tasks | Next Step |
 |---|-----|--------|---------|-------|-----------|
 | 1 | [`prd-reflection-bugfix.md`](specs/prd-reflection-bugfix.md) | 🔴 Draft | Reflection not sent to user + retry + `/reflect` command | 0/12 | Write failing tests (T1-T4) |
-| 2 | [`prd-singleton-guard.md`](specs/prd-singleton-guard.md) | 🔴 Draft | PID lock to prevent duplicate bot instances (root cause of orphan files + 23:22 crash) | 0/9 | Awaiting Boyang approval |
+| 2 | [`prd-singleton-guard.md`](specs/prd-singleton-guard.md) | 🔴 Draft | PID lock to prevent duplicate bot instances (root cause of orphan files + 409 conflicts) | 0/10 | Awaiting Boyang approval |
+| 3 | [`prd-collection-engine.md`](specs/prd-collection-engine.md) | 🔴 Draft | Parallel + retriable + supersedable collection with generation counter | 0/14 | Awaiting Boyang approval |
 
 ---
 
 ## Backlog (Needs PRD)
 
-### Text re-collection silent failure
-- **Priority:** P1
-- **Bug:** When Boyang sends text, recap appends (✍️) but re-collection of new conversations silently fails. No error logged, coverage_to never advances. Messages pile up at next 22:30 collection.
-- **Evidence (2026-03-01 logs):** `Recorded: 743 chars` then NOTHING. Scheduler collects 48 messages (3hr backlog) at 22:30.
-- **Hypotheses:** (A) `collect_all_messages()` returns 0, (B) blocking subprocess, (C) swallowed exception, (D) `_build_session_summaries()` throws
-- **Status:** Needs PRD + investigation
+### ~~Text re-collection silent failure~~ → Covered by `prd-collection-engine.md`
+### ~~LLM summary generation reliability~~ → Covered by `prd-collection-engine.md`
 
-### LLM summary generation reliability
-- **Priority:** P2
-- **Context:** `compose_summary` via `openclaw agent --local` — may be related to re-collection bug
-- **Status:** Needs investigation
+*(Investigation 2026-03-03: "silent failures" were actually correct 0-message results — Boyang was talking to digest bot, not OpenClaw sessions. Real issues are architectural: sequential collection, fallback advancing coverage, no supersession. All addressed in collection engine PRD.)*
 
 ---
 
