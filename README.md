@@ -82,7 +82,7 @@ digest-bot/
 
 ## Specs & PRDs
 
-**All specifications live in `specs/`.** Start with **[`specs/INDEX.md`](specs/INDEX.md)** — it tracks every PRD's status and tells you what to work on next.
+**Start with [`TODO.md`](TODO.md)** — it tracks every bug, PRD, and their status. Then read [`specs/SOP.md`](specs/SOP.md) for the mandatory workflow.
 
 ### Workflow (Mandatory SOP)
 
@@ -99,7 +99,7 @@ digest-bot/
 
 | File | What |
 |------|------|
-| `specs/INDEX.md` | **Start here** — all PRDs with status, progress, next steps |
+| [`TODO.md`](TODO.md) | **Start here** — all active/completed work with status |
 | `specs/SPEC.md` | Core spec — 27 numbered definitions |
 | `specs/TESTING.md` | Three-tier testing strategy |
 | `specs/prd-*.md` | Individual PRDs (features + bugfixes) |

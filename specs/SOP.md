@@ -12,7 +12,7 @@
 **Actions:**
 1. Create `specs/prd-<descriptive-name>.md` using template below
 2. Set status badge: `🔴 Draft`
-3. Add entry to `specs/INDEX.md` Active Work table
+3. Add entry to `TODO.md` Active Work table
 4. Commit: `spec: PRD for <name>`
 5. **STOP. Do not write code. Do not write tests. Wait for PRD approval or move to Step 1 only if Boyang said to proceed.**
 
@@ -24,7 +24,7 @@
 
 **Actions:**
 1. Update PRD status badge: `🟡 Active — writing tests`
-2. Update `specs/INDEX.md` status column and "Next Step"
+2. Update `TODO.md` status column and "Next Step"
 3. For each task T1..TN in the PRD:
    - Write a **failing** test that validates the acceptance criteria
    - Test goes in `tests/test_<module>.py` (unit/integration) or `tests/run_e2e.py` (E2E)
@@ -59,7 +59,7 @@
 
 **Actions:**
 1. Update PRD status badge: `🔵 Testing — E2E verification`
-2. Update `specs/INDEX.md`
+2. Update `TODO.md`
 3. Run full E2E suite: `python3 tests/run_e2e.py --test all`
 4. If any E2E test fails:
    - Debug and fix
@@ -86,7 +86,7 @@
 3. **Send a real message to the bot** (not just tests) to verify production behavior
 4. Update PRD status badge: `🟢 Done — Completed YYYY-MM-DD`
 5. Update PRD: add `Tasks: 12/12 complete`
-6. Move entry in `specs/INDEX.md` from "Active Work" to "Completed" table
+6. Move entry in `TODO.md` from "Active Work" to "Completed" table
 7. Commit: `docs: close <PRD name> — all verified`
 8. Notify Boyang with summary of what was fixed
 
