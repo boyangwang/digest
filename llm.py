@@ -163,9 +163,14 @@ async def async_compose_summary(conversations_text):
 
     try:
         # Launch subprocess with start_new_session=True for killable process groups
+        # Unique session ID per call — parallel calls MUST NOT share a session
+        # (shared session → lock contention → all fail)
+        import uuid
+        session_id = "digest-bot-summary-%s" % uuid.uuid4().hex[:8]
+
         proc = await asyncio.create_subprocess_exec(
             "openclaw", "agent", "--local",
-            "--session-id", "digest-bot",
+            "--session-id", session_id,
             "--message", prompt,
             "--json",
             "--timeout", "180",
