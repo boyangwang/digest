@@ -114,7 +114,7 @@ Full report saved to Obsidian 📓
 
 ### Phase 1: Fix `cmd_sleep` to send reflection content
 
-- [ ] **T1** — Add `format_reflection_telegram(parsed: dict, date_str: str) -> str` to `reflection.py`
+- [x] **T1** — Add `format_reflection_telegram(parsed: dict, date_str: str) -> str` to `reflection.py`
   - Input: parsed reflection dict (8 categories + stats)
   - Output: compact Telegram-friendly message (category counts + top 3-5 items)
   - Max length: 4096 chars (Telegram limit)
@@ -126,13 +126,13 @@ Full report saved to Obsidian 📓
   - Captures git HEAD before/after agent runs for workspace change tracking
   - All callers + tests updated (22/22 pass)
 
-- [ ] **T3** — Modify `cmd_sleep` in `main.py` to send reflection content *(partially done)*
+- [x] **T3** — Modify `cmd_sleep` in `main.py` to send reflection content *(partially done)*
   - [x] Visual diff images sent via `send_photo` after finalize ✅ `3b7fa27`
   - [x] Fallback: `git diff --stat` as text if image rendering fails ✅
   - [ ] Still needed: structured text summary message (category counts + top items)
   - [ ] Still needed: `format_reflection_telegram(parsed, date_str)` function
 
-- [ ] **T4** — Update test mode in `cmd_sleep` to also send mock reflection message
+- [x] **T4** — Update test mode in `cmd_sleep` to also send mock reflection message
   - `TestRecorder.append_reflection()` already exists
   - Add: send mock reflection summary message to test user too
   - This allows E2E test to verify message delivery
@@ -146,7 +146,7 @@ Full report saved to Obsidian 📓
 
 ### Phase 3: E2E verification
 
-- [ ] **T6** — Add E2E test: `/sleep` sends reflection message to chat
+- [x] **T6** — Add E2E test: `/sleep` sends reflection message to chat
   - In `tests/run_e2e.py`, modify `test_sleep_includes_reflection`:
     - After `/sleep`, check bot's reply messages contain reflection content (category counts, "items extracted")
     - Verify message format matches spec
@@ -156,7 +156,7 @@ Full report saved to Obsidian 📓
   - Harder to test E2E (need to simulate agent failure)
   - Can test via unit test instead: mock `_call_agent` to return None
 
-- [ ] **T8** — Run full regression: 277 unit/integration + 8 E2E
+- [x] **T8** — Run full regression: 277 unit/integration + 8 E2E
   - All must pass before declaring done
 
 ---
