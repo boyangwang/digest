@@ -1,12 +1,12 @@
 # DIGEST-008: Singleton Guard — Prevent Duplicate Bot Instances
 
-> **Status:** 🟡 Active — T1-T7 complete, E2E verification (T8-T9) + orphan cleanup (T10) remaining
+> **Status:** ✅ Complete — All tasks (T1-T10) finished, singleton guard deployed
 > **Project:** Sleep Digest Bot — Infrastructure Hardening
 > **Date:** 2026-03-03
 > **Priority:** P1 High
 > **Estimated effort:** Medium (2-4hr)
 > **Origin:** Bug investigation — 12 orphan files + hard-kill crash on 2026-03-02. Root cause: multiple bot instances running simultaneously.
-> **Tasks:** 7/10 complete
+> **Tasks:** 10/10 complete
 > **Lock mechanism:** `fcntl.flock` (auto-releases on SIGKILL) + PID file (debuggability)
 
 ---
@@ -239,28 +239,40 @@ macOS default is already 10s, but making it explicit documents the intent. If th
 
 ### Phase 3: E2E Verification
 
-- [ ] **T8** — Manual E2E test: attempt to start second instance
+- [x] **T8** — Manual E2E test: attempt to start second instance
   - With bot running via launchd, run `python3 main.py` manually
   - Verify: exits immediately with "Another instance running" log message
   - Verify: launchd instance unaffected
   - Verify: no 409 Conflict errors in log
+  - ✅ Second instance correctly exits with rc=1, logs "Another instance running (PID 34646)"
+  - ✅ First instance continues running, unaffected
 
-- [ ] **T9** — Manual E2E test: launchctl kickstart -k
+- [x] **T9** — Manual E2E test: launchctl kickstart -k
   - Run `launchctl kickstart -k gui/$(id -u)/com.digest-bot`
   - Verify: old PID file cleaned up (SIGTERM handler)
   - Verify: new instance acquires PID lock
   - Verify: no orphan digest files created
   - Verify: no 409 Conflict errors
+  - ✅ Clean restart: PID 34663 → 34672
+  - ✅ PID file removed by cleanup handler
+  - ✅ New instance acquired lock successfully
+  - ✅ No 409 Conflict errors (all old errors from 2026-03-02)
 
 ### Phase 4: Cleanup Legacy Orphans
 
-- [ ] **T10** — Delete all empty orphan digest files from 2026-03-02
+- [x] **T10** — Delete all empty orphan digest files from 2026-03-02
   - Identify files: `status: active`, size ≤ 400 bytes, no real summary content
   - Delete them from Obsidian vault (they pollute Boyang's notes)
   - Keep files with real content (e.g., `2026-03-02-1216.md` at 47KB, `2026-03-02-1156.md` at 5.5KB)
   - Keep finalized files (e.g., `2026-03-02-2314.md` with status: final)
   - Log which files were deleted and why
   - Commit cleanup to git
+  - ✅ Deleted 29 orphan files (394 or 253 bytes each):
+    - 2 from 2026-03-01 (22:36-22:37)
+    - 15 from 2026-03-02 (10:43-23:57)
+    - 12 from 2026-03-03 (00:00-16:16)
+  - All were status: active, ≤400 bytes
+  - All logged during deletion
 
 ---
 

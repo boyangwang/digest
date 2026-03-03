@@ -321,11 +321,13 @@ def acquire_pid_lock(pidfile="/tmp/digest-bot.pid"):
     Returns the lock file descriptor (must stay open for process lifetime).
     """
     global _lock_fd
-    _lock_fd = open(pidfile, "w")
+    # Open with "a" (append) to avoid truncating — preserves existing PID for error messages
+    _lock_fd = open(pidfile, "a")
     try:
         fcntl.flock(_lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
         # Another instance holds the lock
+        _lock_fd.close()  # Close our fd
         # Read its PID for the error message
         try:
             with open(pidfile) as f:
@@ -335,7 +337,9 @@ def acquire_pid_lock(pidfile="/tmp/digest-bot.pid"):
         logger.fatal("Another instance running (PID %s). Exiting." % old_pid)
         sys.exit(1)
     
-    # Lock acquired — write our PID for informational purposes
+    # Lock acquired — truncate and write our PID
+    _lock_fd.seek(0)
+    _lock_fd.truncate()
     _lock_fd.write(str(os.getpid()))
     _lock_fd.flush()
     logger.info("PID lock acquired: %s (PID %d)" % (pidfile, os.getpid()))
