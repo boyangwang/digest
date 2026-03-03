@@ -11,7 +11,7 @@
 | ID | PRD | Status | Summary | Tasks | Next Step |
 |------|-----|--------|---------|-------|-----------|
 | DIGEST-007 | [`prd-reflection-bugfix.md`](specs/prd-reflection-bugfix.md) | 🟡 Active | Reflection report to user + visual diffs + retry + /reflect | 10.5/19 | T5: fallback improvement, T16-19: retry + /reflect |
-| DIGEST-008 | [`prd-singleton-guard.md`](specs/prd-singleton-guard.md) | 🟡 Active | PID lock to prevent duplicate bot instances (root cause of orphan files + 409 conflicts) | 4/10 | T5-T10: implement + E2E + cleanup |
+
 | DIGEST-009 | [`prd-collection-engine.md`](specs/prd-collection-engine.md) | 🔴 Draft | Parallel + retriable + supersedable collection with generation counter | 0/14 | Awaiting Boyang approval |
 
 ---
@@ -29,6 +29,7 @@
 
 | ID | PRD | Completed | Summary |
 |------|-----|-----------|---------|
+| DIGEST-008 | [`prd-singleton-guard.md`](specs/prd-singleton-guard.md) | 2026-03-03 | PID lock singleton guard + 29 orphan files cleaned |
 | DIGEST-006 | [`prd-nightly-reflection.md`](specs/prd-nightly-reflection.md) | 2026-03-02 | Nightly reflection — Opus knowledge extraction on /sleep |
 | DIGEST-005 | [`bugfix-recollect-and-orphans.md`](specs/bugfix-recollect-and-orphans.md) | 2026-03-01 | Recollect bug + orphan message cleanup |
 | DIGEST-004 | Voice message feature | 2026-03-01 | SPEC-VOICE implemented, 220+ tests passing |
