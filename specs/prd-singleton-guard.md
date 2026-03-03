@@ -1,6 +1,6 @@
 # DIGEST-008: Singleton Guard — Prevent Duplicate Bot Instances
 
-> **Status:** 🔴 Draft — awaiting approval
+> **Status:** 🟡 Active — T1-T4 tests written, implementing T5-T10
 > **Project:** Sleep Digest Bot — Infrastructure Hardening
 > **Date:** 2026-03-03
 > **Priority:** P1 High
