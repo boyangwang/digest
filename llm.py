@@ -137,8 +137,13 @@ def _fallback(conversations_text):
     ) % (boyang_count, doudou_count, boyang_count, doudou_count)
 
 
-async def async_compose_summary(conversations_text):
+async def async_compose_summary(conversations_text, session_id="digest-bot"):
     """Async version of compose_summary for parallel collection.
+    
+    Args:
+        conversations_text: Formatted conversation text to summarize.
+        session_id: OpenClaw session ID. Each parallel call MUST use a unique ID
+                    to avoid lock contention on the session .jsonl file.
     
     Uses asyncio.create_subprocess_exec with start_new_session=True
     for killable process groups.
@@ -163,11 +168,6 @@ async def async_compose_summary(conversations_text):
 
     try:
         # Launch subprocess with start_new_session=True for killable process groups
-        # Unique session ID per call — parallel calls MUST NOT share a session
-        # (shared session → lock contention → all fail)
-        import uuid
-        session_id = "digest-bot-summary-%s" % uuid.uuid4().hex[:8]
-
         proc = await asyncio.create_subprocess_exec(
             "openclaw", "agent", "--local",
             "--session-id", session_id,

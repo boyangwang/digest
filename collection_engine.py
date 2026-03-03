@@ -209,8 +209,14 @@ class CollectionEngine:
         """
         formatted = format_messages(messages)
         
+        # Derive session ID from source session name — each session gets its own
+        # lock file, enabling true parallel execution without contention.
+        import re
+        safe_name = re.sub(r'[^a-zA-Z0-9]+', '-', name.lower()).strip('-')[:40]
+        sid = "digest-summary-%s" % safe_name
+        
         try:
-            summary = await async_compose_summary(formatted)
+            summary = await async_compose_summary(formatted, session_id=sid)
             
             # Check generation before returning (stale guard)
             if generation != self._generation:
