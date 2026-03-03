@@ -630,83 +630,23 @@ class TestRenderDiffImages:
         assert result == []
         mock_run.assert_not_called()
 
-    def test_calls_agent_for_each_changed_file(self):
-        """UT19: One openclaw agent call per changed file."""
+    def test_returns_empty_deprecated(self):
+        """UT19: render_diff_images returns empty (on-demand via /reflect)."""
         from reflection import render_diff_images
+        diff_data = {"files": [{"path": "a.md", "before": "x", "after": "y"}]}
+        assert render_diff_images(diff_data, "2026-03-02") == []
 
-        diff_data = {"files": [
-            {"path": "KANBAN.md", "before": "old", "after": "new"},
-            {"path": "memory/ideas.md", "before": "a", "after": "b"},
-        ]}
-
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
-            with patch("os.path.exists", return_value=True):
-                result = render_diff_images(diff_data, "2026-03-02")
-
-        # Should call node script for each file
-        assert mock_run.call_count == 2
-        assert len(result) == 2
-
-    def test_agent_failure_skips_gracefully(self):
-        """UT20: If agent fails for one file, others still render."""
+    def test_deprecated_always_empty(self):
+        """UT20: render_diff_images always returns empty (deprecated)."""
         from reflection import render_diff_images
+        diff_data = {"files": [{"path": "a.md", "before": "x", "after": "y"}]}
+        assert render_diff_images(diff_data, "2026-03-02") == []
 
-        diff_data = {"files": [
-            {"path": "fail.md", "before": "a", "after": "b"},
-            {"path": "success.md", "before": "x", "after": "y"},
-        ]}
-
-        call_count = [0]
-
-        def side_effect(args, **kwargs):
-            call_count[0] += 1
-            if call_count[0] == 1:
-                return MagicMock(returncode=1, stderr="error", stdout="")
-            return MagicMock(returncode=0, stdout="", stderr="")
-
-        with patch("subprocess.run", side_effect=side_effect):
-            with patch("os.path.exists", return_value=True):
-                result = render_diff_images(diff_data, "2026-03-02")
-
-        assert len(result) == 1
-        assert "success-md" in result[0]
-
-    def test_truncates_large_files(self):
-        """UT21: Files larger than 50KB are truncated before rendering."""
+    def test_truncates_deprecated(self):
+        """UT21: render_diff_images returns empty (deprecated)."""
         from reflection import render_diff_images
-
-        big_content = "x" * 60000
-        diff_data = {"files": [
-            {"path": "big.md", "before": "", "after": big_content},
-        ]}
-
-        written_content = []
-
-        original_open = open
-
-        def mock_open_fn(path, *args, **kwargs):
-            if "/tmp/reflection-diff-" in str(path) and "after" in str(path):
-                # Capture what gets written
-                class MockFile:
-                    def write(self, data):
-                        written_content.append(data)
-                    def __enter__(self):
-                        return self
-                    def __exit__(self, *args):
-                        pass
-                return MockFile()
-            return original_open(path, *args, **kwargs)
-
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=1, stderr="skip")
-            with patch("builtins.open", side_effect=mock_open_fn):
-                render_diff_images(diff_data, "2026-03-02")
-
-        # The written content should be truncated to ~50K + truncation notice
-        assert len(written_content) == 1
-        assert len(written_content[0]) < 60000
-        assert "truncated" in written_content[0]
+        diff_data = {"files": [{"path": "big.md", "before": "", "after": "x" * 60000}]}
+        assert render_diff_images(diff_data, "2026-03-02") == []
 
 
 # ============================================================
@@ -742,7 +682,7 @@ class TestRunReflectionWithDiff:
         assert report is not None
         assert diff_info["stat"] == "1 file changed"
         assert len(diff_info["files"]) == 1
-        assert diff_info["images"] == ["/tmp/img.png"]
+        assert diff_info["images"] == []
 
     def test_empty_diff_when_no_hash_change(self):
         """IT12: When agent doesn't commit (same hash), diff_info is empty."""
@@ -873,8 +813,8 @@ class TestCmdSleepDiffDelivery:
             report, diff_info, parsed = run_reflection(SAMPLE_CONVERSATIONS, "2026-03-02")
 
         # Verify the data cmd_sleep will use
-        assert len(diff_info["images"]) == 1
-        assert diff_info["images"][0].endswith(".png")
+        assert diff_info["images"] == []
+        # images deprecated — rendered on demand
 
     def test_no_images_when_no_changes(self):
         """IT17: No diff images when agent doesn't modify workspace."""
@@ -935,7 +875,7 @@ class TestCmdSleepDiffDelivery:
 
             report, diff_info, parsed = run_reflection(SAMPLE_CONVERSATIONS, "2026-03-02")
 
-        assert len(diff_info["images"]) == 3
+        assert diff_info["images"] == []
 
 
 # ============================================================

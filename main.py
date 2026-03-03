@@ -634,22 +634,8 @@ async def cmd_sleep(update, context):
         await update.message.reply_text("🪞✅ 已保存到 Obsidian\nReflection + finalize complete! Saved to Obsidian ✅")
         logger.info("Digest finalized with reflection.")
 
-        # Send visual diff images to Boyang
-        if diff_images:
-            try:
-                await update.message.reply_text("📊 Workspace changes from reflection:")
-                for img_path in diff_images:
-                    if os.path.exists(img_path):
-                        with open(img_path, "rb") as f:
-                            await context.bot.send_photo(
-                                chat_id=update.effective_chat.id,
-                                photo=f,
-                            )
-                logger.info("Sent %d diff images to Boyang." % len(diff_images))
-            except Exception as e:
-                logger.warning("Failed to send diff images: %s" % e)
-        elif diff_info.get("stat"):
-            # No images rendered but we have a stat — send as text
+        # Send workspace change summary as text
+        if diff_info.get("stat"):
             try:
                 await update.message.reply_text(
                     "📊 Workspace changes:\n```\n%s\n```" % diff_info["stat"],

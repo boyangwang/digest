@@ -528,69 +528,12 @@ def _git_diff(pre_hash: str, post_hash: str) -> dict:
 
 
 def render_diff_images(diff_data: dict, date_str: str) -> list[str]:
-    """Render visual diff PNGs using Node.js script + playwright.
+    """Deprecated — diff images rendered on-demand via /reflect.
 
-    Zero LLM calls. Direct code: diff → HTML → Chromium screenshot.
-    Returns list of PNG paths. Never raises — returns empty list on failure.
+    During /sleep, only the git stat text is sent. Visual diffs
+    are rendered by the OpenClaw agent's diffs tool when requested.
     """
-    images = []
-    if not diff_data.get("files"):
-        return images
-
-    script_path = os.path.join(os.path.dirname(__file__), "scripts", "render_diff.mjs")
-    if not os.path.exists(script_path):
-        logger.warning("render_diff.mjs not found at %s" % script_path)
-        return images
-
-    for file_info in diff_data["files"]:
-        filepath = file_info["path"]
-        before = file_info["before"]
-        after = file_info["after"]
-
-        if before == after:
-            continue
-
-        # Truncate very large files (50KB per side max)
-        max_chars = 50000
-        if len(before) > max_chars:
-            before = before[:max_chars] + "\n... (truncated)"
-        if len(after) > max_chars:
-            after = after[:max_chars] + "\n... (truncated)"
-
-        before_path = "/tmp/reflection-diff-before-%s.txt" % filepath.replace("/", "_")
-        after_path = "/tmp/reflection-diff-after-%s.txt" % filepath.replace("/", "_")
-        safe_name = re.sub(r'[^a-zA-Z0-9-]', '-', filepath)[:40]
-        output_path = "/tmp/reflection-diff-%s-%s.png" % (date_str, safe_name)
-
-        try:
-            with open(before_path, "w") as f:
-                f.write(before)
-            with open(after_path, "w") as f:
-                f.write(after)
-
-            result = subprocess.run(
-                ["node", script_path, before_path, after_path, filepath, output_path],
-                capture_output=True, text=True, timeout=30,
-                env=_get_env(),
-            )
-
-            if result.returncode == 0 and os.path.exists(output_path):
-                images.append(output_path)
-                logger.info("Rendered diff image: %s → %s" % (filepath, output_path))
-            else:
-                logger.warning("Diff render failed for %s (rc=%d): %s" % (
-                    filepath, result.returncode, result.stderr[:200]))
-
-        except Exception as e:
-            logger.warning("Diff render exception for %s: %s" % (filepath, e))
-        finally:
-            for p in [before_path, after_path]:
-                try:
-                    os.unlink(p)
-                except Exception:
-                    pass
-
-    return images
+    return []
 
 
 # ============================================================
@@ -671,10 +614,8 @@ def run_reflection(conversations_text: str, date_str: str) -> tuple[str | None, 
             diff_info = _git_diff(pre_hash, post_hash)
             logger.info("Workspace changed: %d files modified" % len(diff_info.get("files", [])))
 
-            # Render visual diffs
-            images = render_diff_images(diff_info, date_str)
-            diff_info["images"] = images
-            logger.info("Rendered %d diff images" % len(images))
+            # Visual diffs rendered on-demand via /reflect (diffs tool call)
+            diff_info["images"] = []
         else:
             logger.info("No workspace changes detected (hashes: %s → %s)" % (
                 pre_hash, post_hash))
