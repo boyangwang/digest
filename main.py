@@ -189,21 +189,39 @@ class TestRecorder:
 
         No real agent call — just verifies the wiring works.
         Uses the same section heading as production (SPEC-REFLECT-02).
+        
+        Returns mock parsed dict for format_reflection_telegram().
         """
+        # Mock parsed data for testing
+        mock_parsed = {
+            "facts": [{"category": "Test", "text": "Test fact 1"}],
+            "feedback_lessons": [{"category": "Test", "text": "Test feedback", "action": "Test action"}],
+            "rules_incidents": [],
+            "compliments": [{"text": "Good test", "context": "E2E testing"}],
+            "decisions": [{"decision": "Use test mode", "rationale": "For E2E verification"}],
+            "action_items": [{"text": "Complete E2E tests"}],
+            "ideas": [{"text": "Improve test coverage"}],
+            "technical_learnings": [{"text": "Test recorder pattern works"}],
+            "stats": {"messages_processed": 5, "sessions_scanned": 1, "items_extracted": 8},
+        }
+        
         if not self.has_active():
-            return False
+            return mock_parsed
         content = self.active_file.read_text(encoding="utf-8")
         # Idempotent — skip if already present
         if "🪞 Nightly Reflection" in content:
-            return True
+            return mock_parsed
         now = datetime.now(SGT)
         mock_report = (
             "\n# 🪞 Nightly Reflection\n\n"
             "> Test mode — no real extraction.\n\n"
-            "### 📌 Durable Facts (0)\n"
-            "_None identified today._\n\n"
+            "### 📌 Durable Facts (1)\n"
+            "- **[Test]** Test fact 1\n\n"
+            "### 🔧 Feedback Lessons (1)\n"
+            "- **[Test]** Test feedback\n\n"
             "### 📊 Stats\n"
-            "- Messages processed: 0\n"
+            "- Messages processed: 5\n"
+            "- Items extracted: 8\n"
             "- Model: test-mock\n"
             "- Timestamp: %s\n"
         ) % now.isoformat()
@@ -218,7 +236,7 @@ class TestRecorder:
             content = "---\n%s\n---\n%s" % (fm_str, parts[2])
         content = content.rstrip() + mock_report
         self.active_file.write_text(content, encoding="utf-8")
-        return True
+        return mock_parsed
 
     def finalize(self):
         if not self.has_active():
@@ -440,8 +458,17 @@ async def cmd_sleep(update, context):
         ))
         # Test mode reflection: append a mock reflection section (no real agent call)
         if _test_recorder.has_active():
-            _test_recorder.append_reflection()
+            mock_parsed = _test_recorder.append_reflection()
             logger.info("Test reflection appended.")
+            
+            # T4: Send mock reflection summary message
+            from reflection import format_reflection_telegram
+            now = datetime.now(SGT)
+            date_str = now.strftime("%Y-%m-%d")
+            summary_msg = format_reflection_telegram(mock_parsed, date_str)
+            await update.message.reply_text(summary_msg)
+            logger.info("Test reflection summary sent.")
+            
         success = _test_recorder.finalize()
         if success:
             await update.message.reply_text("🧪 晚安 🌙 Test digest finalized ✅ (with reflection)")
@@ -468,10 +495,16 @@ async def cmd_sleep(update, context):
                     formatted = format_messages(all_msgs)
                     now = datetime.now(SGT)
                     date_str = now.strftime("%Y-%m-%d")
-                    report, diff_info = run_reflection(formatted, date_str)
+                    report, diff_info, parsed = run_reflection(formatted, date_str)
                     if report:
                         append_reflection(report)
                         logger.info("Reflection appended to digest.")
+                        
+                        # T3: Send structured reflection summary to user
+                        from reflection import format_reflection_telegram
+                        summary_msg = format_reflection_telegram(parsed, date_str)
+                        await update.message.reply_text(summary_msg)
+                        logger.info("Reflection summary sent to user.")
                     else:
                         logger.warning("Reflection returned no report.")
                     # Collect diff images for sending after finalize

@@ -261,14 +261,15 @@ class TestEdgeCases:
     """UT7-UT8: Edge cases."""
 
     def test_zero_messages_returns_none(self):
-        """UT7: Zero messages → reflection returns (None, empty_diff) (skip)."""
+        """UT7: Zero messages → reflection returns (None, empty_diff, empty_parsed) (skip)."""
         from reflection import run_reflection
 
         with patch("reflection._call_agent") as mock_agent:
-            report, diff_info = run_reflection(conversations_text="", date_str="2026-03-02")
+            report, diff_info, parsed = run_reflection(conversations_text="", date_str="2026-03-02")
 
         assert report is None
         assert diff_info["files"] == []
+        assert parsed["facts"] == []
         mock_agent.assert_not_called()
 
     def test_agent_empty_response_returns_fallback(self):
@@ -276,7 +277,7 @@ class TestEdgeCases:
         from reflection import run_reflection
 
         with patch("reflection._call_agent", return_value=None):
-            report, diff_info = run_reflection(
+            report, diff_info, parsed = run_reflection(
                 conversations_text=SAMPLE_CONVERSATIONS,
                 date_str="2026-03-02",
             )
@@ -285,6 +286,7 @@ class TestEdgeCases:
         assert report is not None
         assert "Reflection unavailable" in report or "failed" in report.lower()
         assert diff_info["files"] == []
+        assert parsed["facts"] == []  # Empty parsed on failure
 
 
 # ============================================================
@@ -739,7 +741,7 @@ class TestRunReflectionWithDiff:
              patch("reflection._git_diff", return_value=mock_diff_data), \
              patch("reflection.render_diff_images", return_value=["/tmp/img.png"]):
 
-            report, diff_info = run_reflection(SAMPLE_CONVERSATIONS, "2026-03-02")
+            report, diff_info, parsed = run_reflection(SAMPLE_CONVERSATIONS, "2026-03-02")
 
         assert report is not None
         assert diff_info["stat"] == "1 file changed"
@@ -755,7 +757,7 @@ class TestRunReflectionWithDiff:
              patch("reflection._git_diff") as mock_diff, \
              patch("reflection.render_diff_images") as mock_render:
 
-            report, diff_info = run_reflection(SAMPLE_CONVERSATIONS, "2026-03-02")
+            report, diff_info, parsed = run_reflection(SAMPLE_CONVERSATIONS, "2026-03-02")
 
         assert report is not None
         # _git_diff should NOT be called when hashes are the same
@@ -771,7 +773,7 @@ class TestRunReflectionWithDiff:
         with patch("reflection._call_agent", return_value=None), \
              patch("reflection._git_head_hash", return_value="hash1"):
 
-            report, diff_info = run_reflection(SAMPLE_CONVERSATIONS, "2026-03-02")
+            report, diff_info, parsed = run_reflection(SAMPLE_CONVERSATIONS, "2026-03-02")
 
         assert "unavailable" in report.lower() or "failed" in report.lower()
         assert diff_info["files"] == []
@@ -793,7 +795,7 @@ class TestRunReflectionWithDiff:
              patch("reflection._git_diff", side_effect=OSError("disk fail")):
 
             # Should not crash — exception handling in run_reflection
-            report, diff_info = run_reflection(SAMPLE_CONVERSATIONS, "2026-03-02")
+            report, diff_info, parsed = run_reflection(SAMPLE_CONVERSATIONS, "2026-03-02")
 
         # The outer try/except catches this
         assert report is not None or diff_info is not None
@@ -819,7 +821,7 @@ class TestRunReflectionWithDiff:
              patch("reflection._git_diff", return_value=mock_diff_data), \
              patch("reflection.render_diff_images", return_value=[]):
 
-            report, diff_info = run_reflection(SAMPLE_CONVERSATIONS, "2026-03-02")
+            report, diff_info, parsed = run_reflection(SAMPLE_CONVERSATIONS, "2026-03-02")
 
         assert report is not None
         assert len(diff_info["files"]) == 1
@@ -872,7 +874,7 @@ class TestCmdSleepDiffDelivery:
              patch("reflection._git_diff", return_value=mock_diff_info), \
              patch("reflection.render_diff_images", return_value=["/tmp/openclaw/test1/preview.png"]):
 
-            report, diff_info = run_reflection(SAMPLE_CONVERSATIONS, "2026-03-02")
+            report, diff_info, parsed = run_reflection(SAMPLE_CONVERSATIONS, "2026-03-02")
 
         # Verify the data cmd_sleep will use
         assert len(diff_info["images"]) == 1
@@ -885,7 +887,7 @@ class TestCmdSleepDiffDelivery:
         with patch("reflection._call_agent", return_value=SAMPLE_REFLECTION_JSON), \
              patch("reflection._git_head_hash", return_value="unchanged"):
 
-            report, diff_info = run_reflection(SAMPLE_CONVERSATIONS, "2026-03-02")
+            report, diff_info, parsed = run_reflection(SAMPLE_CONVERSATIONS, "2026-03-02")
 
         assert diff_info["images"] == []
 
@@ -904,7 +906,7 @@ class TestCmdSleepDiffDelivery:
              patch("reflection._git_diff", return_value=mock_diff_data), \
              patch("reflection.render_diff_images", return_value=[]):
 
-            report, diff_info = run_reflection(SAMPLE_CONVERSATIONS, "2026-03-02")
+            report, diff_info, parsed = run_reflection(SAMPLE_CONVERSATIONS, "2026-03-02")
 
         # stat is available even when images failed
         assert "1 file changed" in diff_info["stat"]
@@ -935,6 +937,149 @@ class TestCmdSleepDiffDelivery:
              patch("reflection._git_diff", return_value=mock_diff_data), \
              patch("reflection.render_diff_images", return_value=mock_images):
 
-            report, diff_info = run_reflection(SAMPLE_CONVERSATIONS, "2026-03-02")
+            report, diff_info, parsed = run_reflection(SAMPLE_CONVERSATIONS, "2026-03-02")
 
         assert len(diff_info["images"]) == 3
+
+
+# ============================================================
+# UNIT TESTS — Telegram message formatting (T1)
+# ============================================================
+
+class TestFormatReflectionTelegram:
+    """UT22-UT27: format_reflection_telegram() — compact summary for Telegram."""
+
+    def test_basic_format(self):
+        """UT22: Basic format includes date, category counts, stats."""
+        from reflection import format_reflection_telegram, parse_reflection_response
+
+        parsed = parse_reflection_response(SAMPLE_REFLECTION_JSON)
+        message = format_reflection_telegram(parsed, "2026-03-02")
+
+        assert "2026-03-02" in message
+        assert "📌 Facts: 2" in message
+        assert "🔧 Feedback: 1" in message
+        assert "🌟 Compliments: 1" in message
+        assert "🧭 Decisions: 1" in message
+        assert "📋 Action Items: 1" in message
+        assert "💡 Ideas: 1" in message
+        assert "🔬 Technical: 1" in message
+        assert "📊" in message  # Stats section
+        assert "items extracted" in message.lower()
+
+    def test_includes_top_items(self):
+        """UT23: Shows top 3-5 items from non-empty categories."""
+        from reflection import format_reflection_telegram, parse_reflection_response
+
+        parsed = parse_reflection_response(SAMPLE_REFLECTION_JSON)
+        message = format_reflection_telegram(parsed, "2026-03-02")
+
+        # Should include some actual item text (top items)
+        assert "Ashley" in message or "VO2max" in message  # From facts
+        assert "Opus" in message or "Cloudflare" in message  # From decisions/actions
+
+    def test_zero_counts_shown(self):
+        """UT24: Categories with 0 items show count as 0."""
+        from reflection import format_reflection_telegram, parse_reflection_response
+
+        parsed = parse_reflection_response(SAMPLE_REFLECTION_JSON)
+        message = format_reflection_telegram(parsed, "2026-03-02")
+
+        # rules_incidents is empty in sample
+        assert "⚠️ Incidents: 0" in message
+
+    def test_empty_reflection(self):
+        """UT25: Empty reflection (all zeros) shows gracefully."""
+        from reflection import format_reflection_telegram, parse_reflection_response
+
+        empty = parse_reflection_response("{}")
+        message = format_reflection_telegram(empty, "2026-03-02")
+
+        assert "2026-03-02" in message
+        assert "0 items" in message.lower()
+        # All categories should show 0
+        for emoji in ["📌", "🔧", "⚠️", "🌟", "🧭", "📋", "💡", "🔬"]:
+            assert emoji in message
+
+    def test_respects_4096_char_limit(self):
+        """UT26: Never exceeds Telegram's 4096 char limit, truncates gracefully."""
+        from reflection import format_reflection_telegram
+
+        # Create huge parsed data
+        big_parsed = {
+            "facts": [{"category": "Cat%d" % i, "text": "Long fact text " * 50} for i in range(100)],
+            "feedback_lessons": [],
+            "rules_incidents": [],
+            "compliments": [],
+            "decisions": [],
+            "action_items": [],
+            "ideas": [],
+            "technical_learnings": [],
+            "stats": {"messages_processed": 500, "sessions_scanned": 20, "items_extracted": 100},
+        }
+
+        message = format_reflection_telegram(big_parsed, "2026-03-02")
+
+        assert len(message) <= 4096
+        # Should indicate truncation
+        if len(message) >= 4000:
+            assert "..." in message or "truncated" in message.lower()
+
+    def test_message_readable_format(self):
+        """UT27: Message is human-readable, not debug output."""
+        from reflection import format_reflection_telegram, parse_reflection_response
+
+        parsed = parse_reflection_response(SAMPLE_REFLECTION_JSON)
+        message = format_reflection_telegram(parsed, "2026-03-02")
+
+        # Should NOT have JSON or debug markers
+        assert "{" not in message
+        assert "}" not in message
+        assert "dict(" not in message
+
+        # SHOULD have emoji and readable structure
+        assert "🪞" in message or "Reflection" in message
+        assert "\n" in message  # Multi-line
+        assert "• " in message or "- " in message or ":" in message  # Bullet/structured
+
+
+# ============================================================
+# INTEGRATION TESTS — run_reflection returns parsed data (T3)
+# ============================================================
+
+class TestRunReflectionReturnsParsed:
+    """IT20-IT21: run_reflection() now returns (report, diff_info, parsed)."""
+
+    def test_returns_three_tuple(self):
+        """IT20: run_reflection returns (report, diff_info, parsed)."""
+        from reflection import run_reflection
+
+        with patch("reflection._call_agent", return_value=SAMPLE_REFLECTION_JSON), \
+             patch("reflection._git_head_hash", return_value="same_hash"):
+
+            result = run_reflection(SAMPLE_CONVERSATIONS, "2026-03-02")
+
+        # Should be a 3-tuple now
+        assert isinstance(result, tuple)
+        assert len(result) == 3
+        report, diff_info, parsed = result
+        assert isinstance(report, str)
+        assert isinstance(diff_info, dict)
+        assert isinstance(parsed, dict)
+        assert "facts" in parsed
+
+    def test_parsed_matches_report(self):
+        """IT21: Parsed dict is consistent with the report."""
+        from reflection import run_reflection
+
+        with patch("reflection._call_agent", return_value=SAMPLE_REFLECTION_JSON), \
+             patch("reflection._git_head_hash", return_value="same_hash"):
+
+            report, diff_info, parsed = run_reflection(SAMPLE_CONVERSATIONS, "2026-03-02")
+
+        # Verify parsed has same data as report
+        assert len(parsed["facts"]) == 2
+        assert len(parsed["decisions"]) == 1
+        # Report should mention these items
+        assert "Ashley" in report
+        assert "Opus" in report

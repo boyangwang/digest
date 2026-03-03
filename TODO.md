@@ -8,11 +8,11 @@
 
 ## Active Work
 
-| # | PRD | Status | Summary | Tasks | Next Step |
-|---|-----|--------|---------|-------|-----------|
-| 1 | [`prd-reflection-bugfix.md`](specs/prd-reflection-bugfix.md) | 🟡 Active | Reflection report to user + visual diffs + retry + `/reflect` | 5.5/19 | T1: `format_reflection_telegram()` + T3: text summary |
-| 2 | [`prd-singleton-guard.md`](specs/prd-singleton-guard.md) | 🔴 Draft | PID lock to prevent duplicate bot instances (root cause of orphan files + 409 conflicts) | 0/10 | Awaiting Boyang approval |
-| 3 | [`prd-collection-engine.md`](specs/prd-collection-engine.md) | 🔴 Draft | Parallel + retriable + supersedable collection with generation counter | 0/14 | Awaiting Boyang approval |
+| ID | PRD | Status | Summary | Tasks | Next Step |
+|------|-----|--------|---------|-------|-----------|
+| SDB-007 | [`prd-reflection-bugfix.md`](specs/prd-reflection-bugfix.md) | 🟡 Active | Reflection report to user + visual diffs + retry + `/reflect` | 5.5/19 | T1: `format_reflection_telegram()` + T3: text summary |
+| SDB-008 | [`prd-singleton-guard.md`](specs/prd-singleton-guard.md) | 🔴 Draft | PID lock to prevent duplicate bot instances (root cause of orphan files + 409 conflicts) | 0/10 | Awaiting Boyang approval |
+| SDB-009 | [`prd-collection-engine.md`](specs/prd-collection-engine.md) | 🔴 Draft | Parallel + retriable + supersedable collection with generation counter | 0/14 | Awaiting Boyang approval |
 
 ---
 

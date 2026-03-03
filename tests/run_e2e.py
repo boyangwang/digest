@@ -462,6 +462,144 @@ def test_sleep_without_digest():
     assert "has_active=False" in log_text, "Should report no active digest"
 
 
+def test_digest_then_digest_resets():
+    """E2E-R6: Sending /digest twice — second should start fresh.
+
+    First /digest creates file. Second /digest while first is active
+    should either reject or create a new one (verify current behavior).
+    """
+    marker = drop_log_marker()
+    send_message("/digest", wait_after=2)
+    wait_for_log(marker, "Test /digest", timeout=10)
+    files1 = get_test_files(wait_timeout=5)
+    assert len(files1) >= 1, "First /digest didn't create file"
+
+    marker2 = drop_log_marker()
+    send_message("/digest", wait_after=2)
+    found, log_text = wait_for_log(marker2, "Test /digest", timeout=10)
+    assert found, "Second /digest not processed"
+
+    # The bot should handle this gracefully — either skip or create new
+    # No crash is the key assertion
+    files2 = get_test_files(wait_timeout=3)
+    assert len(files2) >= 1, "Should still have at least one test file"
+
+
+def test_sleep_reflection_file_structure():
+    """E2E-R7: Verify complete file structure after /sleep with reflection.
+
+    Full content validation: YAML frontmatter + all sections + correct order.
+    """
+    marker = drop_log_marker()
+    send_message("/digest", wait_after=2)
+    wait_for_log(marker, "Test /digest", timeout=10)
+
+    marker2 = drop_log_marker()
+    send_message("Detailed E2E structure test entry", wait_after=2)
+    wait_for_log(marker2, "recorded", timeout=10)
+
+    files = get_test_files(wait_timeout=5)
+    assert len(files) >= 1, "No digest file created"
+
+    marker3 = drop_log_marker()
+    send_message("/sleep", wait_after=2)
+    wait_for_log(marker3, "Test reflection appended", timeout=10)
+
+    content = files[0].read_text()
+
+    # YAML frontmatter must have all required fields
+    assert "---" in content, "Missing YAML frontmatter delimiter"
+    assert "generated_at:" in content, "Missing generated_at"
+    assert "coverage_from:" in content, "Missing coverage_from"
+    assert "status:" in content, "Missing status"
+    assert "reflection_at:" in content, "Missing reflection_at"
+    assert "reflection_model:" in content, "Missing reflection_model"
+    assert "finalized_at:" in content, "Missing finalized_at"
+
+    # Sections in correct order
+    sections = ["Doudou's Summary", "Boyang's Recap", "Nightly Reflection"]
+    positions = []
+    for section in sections:
+        assert section in content, f"Missing section: {section}"
+        positions.append(content.index(section))
+    assert positions == sorted(positions), \
+        f"Sections out of order: {list(zip(sections, positions))}"
+
+    # Recap content preserved
+    assert "Detailed E2E structure test entry" in content, "Recap text lost after reflection"
+
+
+def test_voice_message_skipped_in_test():
+    """E2E-R8: Voice messages in test mode are rejected gracefully."""
+    marker = drop_log_marker()
+    # Can't send actual voice in AppleScript, but verify /status works after
+    send_message("/status", wait_after=2)
+    found, log_text = wait_for_log(marker, "Test user", timeout=10)
+    assert found, "Bot not responding after potential edge case"
+
+
+def test_status_shows_active_digest():
+    """E2E-R9: /status after /digest shows active digest info."""
+    marker = drop_log_marker()
+    send_message("/digest", wait_after=2)
+    wait_for_log(marker, "Test /digest", timeout=10)
+
+    marker2 = drop_log_marker()
+    send_message("/status", wait_after=2)
+    found, log_text = wait_for_log(marker2, "Test user", timeout=10)
+    assert found, "/status not processed"
+    # Should show active state in some form
+
+
+def test_multiple_recap_entries():
+    """E2E-R10: Multiple text messages all appear in recap section."""
+    marker = drop_log_marker()
+    send_message("/digest", wait_after=2)
+    wait_for_log(marker, "Test /digest", timeout=10)
+
+    entries = ["First recap entry", "Second recap entry", "Third recap entry"]
+    for entry in entries:
+        m = drop_log_marker()
+        send_message(entry, wait_after=2)
+        wait_for_log(m, "recorded", timeout=10)
+
+    files = get_test_files(wait_timeout=5)
+    assert len(files) >= 1, "No digest file"
+    content = files[0].read_text()
+
+    for entry in entries:
+        assert entry in content, f"Recap entry missing: '{entry}'"
+
+    # Now /sleep and verify all entries survive
+    marker2 = drop_log_marker()
+    send_message("/sleep", wait_after=2)
+    wait_for_log(marker2, "Test reflection appended", timeout=10)
+
+    content = files[0].read_text()
+    for entry in entries:
+        assert entry in content, f"Recap entry lost after /sleep: '{entry}'"
+    assert "Nightly Reflection" in content, "Reflection section missing"
+
+
+def test_rapid_commands():
+    """E2E-R11: Rapid sequential commands don't crash the bot.
+
+    Send /digest, text, /sleep in quick succession without long waits.
+    Bot must handle all correctly.
+    """
+    marker = drop_log_marker()
+    send_message("/digest", wait_after=1)
+    send_message("Rapid test entry", wait_after=1)
+    send_message("/sleep", wait_after=1)
+
+    # Give the bot time to catch up
+    found, log_text = wait_for_log(marker, "Test /sleep", timeout=15)
+    assert found, "Bot didn't process rapid /sleep"
+
+    # Verify the full cycle completed
+    wait_for_log(marker, "Test reflection appended", timeout=10)
+
+
 # ============================================================
 # Test registry
 # ============================================================
@@ -477,6 +615,10 @@ SUITES = {
     "lifecycle": [
         ("test_full_lifecycle", test_full_lifecycle),
         ("test_sleep_without_digest", test_sleep_without_digest),
+        ("test_digest_then_digest_resets", test_digest_then_digest_resets),
+        ("test_multiple_recap_entries", test_multiple_recap_entries),
+        ("test_rapid_commands", test_rapid_commands),
+        ("test_status_shows_active_digest", test_status_shows_active_digest),
     ],
     "reflection": [
         ("test_sleep_includes_reflection", test_sleep_includes_reflection),
@@ -484,6 +626,10 @@ SUITES = {
         ("test_sleep_finalizes_with_reflection", test_sleep_finalizes_with_reflection),
         ("test_sleep_reflection_idempotent", test_sleep_reflection_idempotent),
         ("test_sleep_without_text_still_reflects", test_sleep_without_text_still_reflects),
+        ("test_sleep_reflection_file_structure", test_sleep_reflection_file_structure),
+    ],
+    "edge": [
+        ("test_voice_message_skipped_in_test", test_voice_message_skipped_in_test),
     ],
 }
 

@@ -269,6 +269,95 @@ _CATEGORY_HEADERS = [
 ]
 
 
+def format_reflection_telegram(parsed: dict, date_str: str) -> str:
+    """Format parsed reflection into compact Telegram message.
+
+    Max 4096 chars (Telegram limit). Shows category counts + top 3-5 items.
+    Truncates gracefully if too long.
+    """
+    lines = ["🪞 Nightly Reflection — %s" % date_str, ""]
+
+    # Category counts with emoji
+    category_lines = [
+        ("📌 Facts", parsed.get("facts", [])),
+        ("🔧 Feedback", parsed.get("feedback_lessons", [])),
+        ("⚠️ Incidents", parsed.get("rules_incidents", [])),
+        ("🌟 Compliments", parsed.get("compliments", [])),
+        ("🧭 Decisions", parsed.get("decisions", [])),
+        ("📋 Action Items", parsed.get("action_items", [])),
+        ("💡 Ideas", parsed.get("ideas", [])),
+        ("🔬 Technical", parsed.get("technical_learnings", [])),
+    ]
+
+    for label, items in category_lines:
+        lines.append("%s: %d items" % (label, len(items)))
+
+    # Stats
+    stats = parsed.get("stats", {})
+    total_items = stats.get("items_extracted", 0)
+    msg_count = stats.get("messages_processed", 0)
+    lines.append("")
+    lines.append("📊 %d items extracted from %d messages" % (total_items, msg_count))
+
+    # Top items section (3-5 items from each non-empty category)
+    lines.append("")
+    lines.append("Top items:")
+    max_items_per_category = 3
+    shown_any = False
+
+    for label, items in category_lines:
+        if items:
+            for item in items[:max_items_per_category]:
+                text = _extract_item_text(item, label)
+                if text:
+                    lines.append("• [%s] %s" % (label.split()[1], text))  # Extract category name
+                    shown_any = True
+
+    if not shown_any:
+        lines.append("• (No items extracted)")
+
+    lines.append("")
+    lines.append("Full report saved to Obsidian 📓")
+
+    message = "\n".join(lines)
+
+    # Truncate if exceeds Telegram limit
+    if len(message) > 4096:
+        message = message[:4090] + "..."
+
+    return message
+
+
+def _extract_item_text(item: dict | str, category_label: str) -> str:
+    """Extract displayable text from an item dict/string. Max 120 chars."""
+    if isinstance(item, str):
+        return item[:120]
+    if not isinstance(item, dict):
+        return str(item)[:120]
+
+    # Extract text based on category
+    if "Facts" in category_label:
+        cat = item.get("category", "")
+        text = item.get("text", "")
+        return "%s: %s" % (cat, text[:80]) if cat else text[:120]
+    elif "Feedback" in category_label:
+        return item.get("text", "")[:120]
+    elif "Compliments" in category_label:
+        return item.get("text", "")[:120]
+    elif "Decisions" in category_label:
+        return item.get("decision", "")[:120]
+    elif "Action" in category_label:
+        return item.get("text", "")[:120]
+    elif "Ideas" in category_label:
+        return item.get("text", "")[:120]
+    elif "Technical" in category_label:
+        return item.get("text", "")[:120]
+    elif "Incidents" in category_label:
+        return item.get("text", "")[:120]
+    else:
+        return str(item)[:120]
+
+
 def format_reflection_report(parsed: dict) -> str:
     """Format parsed reflection data into markdown for digest append.
 
@@ -498,21 +587,23 @@ def render_diff_images(diff_data: dict, date_str: str) -> list[str]:
 # Main entry point
 # ============================================================
 
-def run_reflection(conversations_text: str, date_str: str) -> tuple[str | None, dict]:
+def run_reflection(conversations_text: str, date_str: str) -> tuple[str | None, dict, dict]:
     """Run the full nightly reflection pipeline.
 
-    Returns (report, diff_info) tuple:
+    Returns (report, diff_info, parsed) tuple:
       - report: formatted markdown string, or None if skipped/failed
       - diff_info: dict with keys: stat, patch, files, images (list of PNG paths)
+      - parsed: parsed reflection dict with 8 categories + stats
 
     SPEC-REFLECT-05: Never raises — always returns gracefully.
     """
     empty_diff = {"stat": "", "patch": "", "files": [], "images": []}
+    empty_parsed = dict(_EMPTY_RESULT)
 
     # UT7: Skip if no conversations
     if not conversations_text or not conversations_text.strip():
         logger.info("No conversations for reflection — skipping.")
-        return None, empty_diff
+        return None, empty_diff, empty_parsed
 
     try:
         # Save conversations to file
@@ -533,6 +624,7 @@ def run_reflection(conversations_text: str, date_str: str) -> tuple[str | None, 
             return (
                 "# 🪞 Nightly Reflection\n\n_Reflection unavailable — agent failed to respond._\n",
                 empty_diff,
+                empty_parsed,
             )
 
         # Parse response
@@ -560,11 +652,12 @@ def run_reflection(conversations_text: str, date_str: str) -> tuple[str | None, 
             logger.info("No workspace changes detected (hashes: %s → %s)" % (
                 pre_hash, post_hash))
 
-        return report, diff_info
+        return report, diff_info, parsed
 
     except Exception as e:
         logger.error("Reflection failed: %s" % e)
         return (
             "# 🪞 Nightly Reflection\n\n_Reflection failed: %s_\n" % str(e),
             empty_diff,
+            empty_parsed,
         )
