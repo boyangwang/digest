@@ -22,10 +22,10 @@ Bug reported or feature requested → **check existing work first, then create P
 1. **READ `TODO.md` first** — check Active Work and Backlog for duplicates. If someone is already working on this, coordinate instead of creating a new PRD.
 2. **Check `specs/` directory** — `ls specs/prd-*.md` to see all existing PRDs. Search by keyword.
 3. **If no duplicate exists:** Create `specs/prd-<descriptive-name>.md` using [PRD template](#prd-template) below
-4. **Assign serial number:** `SDB-XXX` (increment from highest existing number in `TODO.md`). Include in both the PRD header and the TODO.md entry.
+4. **Assign serial number:** `DIGEST-XXX` (increment from highest existing number in `TODO.md`). Include in both the PRD header and the TODO.md entry.
 5. Set status badge: `🔴 Draft`
 6. Add entry to [`TODO.md`](TODO.md) Active Work table with the serial number
-7. Commit: `spec: SDB-XXX PRD for <name>`
+7. Commit: `spec: DIGEST-XXX PRD for <name>`
 8. **STOP.** Do not write code or tests yet. Wait for approval or proceed only if PRD was written collaboratively with Boyang.
 
 **⚠️ Why steps 1-2 matter:** Multiple agents/sessions may work on this repo simultaneously. Creating duplicate PRDs wastes effort and creates confusion. Always check first.

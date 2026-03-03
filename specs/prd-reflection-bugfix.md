@@ -1,4 +1,4 @@
-# SDB-007: Reflection Bugfix — Send Structured Report to User
+# DIGEST-007: Reflection Bugfix — Send Structured Report to User
 
 > **Status:** 🟡 Active — T2 done, T3 partially done (visual diff), remaining tasks open
 > **Project:** Sleep Digest Bot — Bug #1 Fix
