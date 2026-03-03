@@ -32,6 +32,9 @@ REFLECTION_SESSION_ID = "digest-bot-reflection"
 # Model — always Opus (PRD decision: quality > cost for persistent knowledge)
 REFLECTION_MODEL = "anthropic/claude-opus-4-6"
 
+# Workspace root for git diff capture
+WORKSPACE_DIR = "/Users/claw/.openclaw/workspace"
+
 
 # ============================================================
 # Data preparation
@@ -332,20 +335,184 @@ def format_reflection_report(parsed: dict) -> str:
 
 
 # ============================================================
+# Git diff capture & visual rendering
+# ============================================================
+
+def _git_head_hash() -> str | None:
+    """Get current HEAD commit hash of the workspace repo."""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            capture_output=True, text=True, cwd=WORKSPACE_DIR,
+        )
+        return result.stdout.strip() if result.returncode == 0 else None
+    except Exception:
+        return None
+
+
+def _git_diff(pre_hash: str, post_hash: str) -> dict:
+    """Capture git diff between two commits.
+
+    Returns dict with:
+      - files: list of {path, before, after} for each changed file
+      - patch: unified patch text
+      - stat: short stat summary
+    """
+    result = {"files": [], "patch": "", "stat": ""}
+
+    try:
+        # Get stat summary
+        stat_result = subprocess.run(
+            ["git", "diff", "--stat", pre_hash, post_hash],
+            capture_output=True, text=True, cwd=WORKSPACE_DIR,
+        )
+        result["stat"] = stat_result.stdout.strip()
+
+        # Get list of changed files
+        names_result = subprocess.run(
+            ["git", "diff", "--name-only", pre_hash, post_hash],
+            capture_output=True, text=True, cwd=WORKSPACE_DIR,
+        )
+        changed_files = [f for f in names_result.stdout.strip().split("\n") if f]
+
+        # Get full unified patch
+        patch_result = subprocess.run(
+            ["git", "diff", pre_hash, post_hash],
+            capture_output=True, text=True, cwd=WORKSPACE_DIR,
+        )
+        result["patch"] = patch_result.stdout.strip()
+
+        # Get before/after content for each changed file
+        for filepath in changed_files:
+            before = ""
+            after = ""
+            try:
+                b = subprocess.run(
+                    ["git", "show", "%s:%s" % (pre_hash, filepath)],
+                    capture_output=True, text=True, cwd=WORKSPACE_DIR,
+                )
+                before = b.stdout if b.returncode == 0 else ""
+            except Exception:
+                pass
+            try:
+                a = subprocess.run(
+                    ["git", "show", "%s:%s" % (post_hash, filepath)],
+                    capture_output=True, text=True, cwd=WORKSPACE_DIR,
+                )
+                after = a.stdout if a.returncode == 0 else ""
+            except Exception:
+                pass
+            result["files"].append({"path": filepath, "before": before, "after": after})
+
+    except Exception as e:
+        logger.warning("Git diff capture failed: %s" % e)
+
+    return result
+
+
+def render_diff_images(diff_data: dict, date_str: str) -> list[str]:
+    """Render visual diff PNGs using openclaw agent --local with diffs tool.
+
+    Sends one agent call per changed file. Returns list of PNG paths.
+    Never raises — returns empty list on failure.
+    """
+    images = []
+    if not diff_data.get("files"):
+        return images
+
+    for file_info in diff_data["files"]:
+        filepath = file_info["path"]
+        before = file_info["before"]
+        after = file_info["after"]
+
+        # Skip if no actual change
+        if before == after:
+            continue
+
+        # Truncate very large files (50KB per side max)
+        max_chars = 50000
+        if len(before) > max_chars:
+            before = before[:max_chars] + "\n... (truncated)"
+        if len(after) > max_chars:
+            after = after[:max_chars] + "\n... (truncated)"
+
+        try:
+            # Write before/after to temp files so agent can read them
+            # (avoids shell escaping issues with large content in --message)
+            before_path = "/tmp/reflection-diff-before-%s.txt" % filepath.replace("/", "_")
+            after_path = "/tmp/reflection-diff-after-%s.txt" % filepath.replace("/", "_")
+            with open(before_path, "w") as f:
+                f.write(before)
+            with open(after_path, "w") as f:
+                f.write(after)
+
+            msg = (
+                'Read the file at %s as "before" text and the file at %s as "after" text. '
+                'Then call the diffs tool with: before=<contents of before file>, '
+                'after=<contents of after file>, path="%s", mode="image". '
+                'Reply with ONLY the imagePath from the diffs tool result. Nothing else.'
+                % (before_path, after_path, filepath)
+            )
+
+            result = subprocess.run(
+                [
+                    "openclaw", "agent", "--local",
+                    "--session-id", "reflection-diff-render",
+                    "--message", msg,
+                    "--json",
+                    "--timeout", "120",
+                ],
+                capture_output=True, text=True, timeout=150,
+                env=_get_env(),
+            )
+
+            if result.returncode == 0:
+                data = json.loads(result.stdout)
+                text = data.get("payloads", [{}])[0].get("text", "")
+                # Extract path from response
+                for line in text.split("\n"):
+                    line = line.strip().strip("`")
+                    if "/tmp/openclaw" in line and ".png" in line:
+                        if os.path.exists(line):
+                            images.append(line)
+                            logger.info("Rendered diff image: %s → %s" % (filepath, line))
+                        break
+            else:
+                logger.warning("Diff render failed for %s (rc=%d): %s" % (
+                    filepath, result.returncode, result.stderr[:200]))
+
+        except Exception as e:
+            logger.warning("Diff render exception for %s: %s" % (filepath, e))
+        finally:
+            # Clean up temp files
+            for p in [before_path, after_path]:
+                try:
+                    os.unlink(p)
+                except Exception:
+                    pass
+
+    return images
+
+
+# ============================================================
 # Main entry point
 # ============================================================
 
-def run_reflection(conversations_text: str, date_str: str) -> str | None:
+def run_reflection(conversations_text: str, date_str: str) -> tuple[str | None, dict]:
     """Run the full nightly reflection pipeline.
 
-    Returns formatted markdown report, or None if skipped/failed.
+    Returns (report, diff_info) tuple:
+      - report: formatted markdown string, or None if skipped/failed
+      - diff_info: dict with keys: stat, patch, files, images (list of PNG paths)
 
     SPEC-REFLECT-05: Never raises — always returns gracefully.
     """
+    empty_diff = {"stat": "", "patch": "", "files": [], "images": []}
+
     # UT7: Skip if no conversations
     if not conversations_text or not conversations_text.strip():
         logger.info("No conversations for reflection — skipping.")
-        return None
+        return None, empty_diff
 
     try:
         # Save conversations to file
@@ -354,12 +521,19 @@ def run_reflection(conversations_text: str, date_str: str) -> str | None:
         # Build prompt
         prompt = build_reflection_prompt(filepath, date_str)
 
+        # Capture workspace state BEFORE agent runs
+        pre_hash = _git_head_hash()
+        logger.info("Pre-reflection git hash: %s" % pre_hash)
+
         # Call agent
         response = _call_agent(prompt)
 
         if not response:
             logger.warning("Reflection agent returned no response — fallback.")
-            return "# 🪞 Nightly Reflection\n\n_Reflection unavailable — agent failed to respond._\n"
+            return (
+                "# 🪞 Nightly Reflection\n\n_Reflection unavailable — agent failed to respond._\n",
+                empty_diff,
+            )
 
         # Parse response
         parsed = parse_reflection_response(response)
@@ -369,8 +543,28 @@ def run_reflection(conversations_text: str, date_str: str) -> str | None:
         logger.info("Reflection complete: %d items extracted" % (
             parsed["stats"].get("items_extracted", 0)))
 
-        return report
+        # Capture workspace state AFTER agent ran
+        post_hash = _git_head_hash()
+        logger.info("Post-reflection git hash: %s" % post_hash)
+
+        diff_info = dict(empty_diff)
+        if pre_hash and post_hash and pre_hash != post_hash:
+            diff_info = _git_diff(pre_hash, post_hash)
+            logger.info("Workspace changed: %d files modified" % len(diff_info.get("files", [])))
+
+            # Render visual diffs
+            images = render_diff_images(diff_info, date_str)
+            diff_info["images"] = images
+            logger.info("Rendered %d diff images" % len(images))
+        else:
+            logger.info("No workspace changes detected (hashes: %s → %s)" % (
+                pre_hash, post_hash))
+
+        return report, diff_info
 
     except Exception as e:
         logger.error("Reflection failed: %s" % e)
-        return "# 🪞 Nightly Reflection\n\n_Reflection failed: %s_\n" % str(e)
+        return (
+            "# 🪞 Nightly Reflection\n\n_Reflection failed: %s_\n" % str(e),
+            empty_diff,
+        )

@@ -261,28 +261,30 @@ class TestEdgeCases:
     """UT7-UT8: Edge cases."""
 
     def test_zero_messages_returns_none(self):
-        """UT7: Zero messages → reflection returns None (skip)."""
+        """UT7: Zero messages → reflection returns (None, empty_diff) (skip)."""
         from reflection import run_reflection
 
         with patch("reflection._call_agent") as mock_agent:
-            result = run_reflection(conversations_text="", date_str="2026-03-02")
+            report, diff_info = run_reflection(conversations_text="", date_str="2026-03-02")
 
-        assert result is None
+        assert report is None
+        assert diff_info["files"] == []
         mock_agent.assert_not_called()
 
     def test_agent_empty_response_returns_fallback(self):
-        """UT8: Agent returns empty → fallback report."""
+        """UT8: Agent returns empty → fallback report + empty diff."""
         from reflection import run_reflection
 
         with patch("reflection._call_agent", return_value=None):
-            result = run_reflection(
+            report, diff_info = run_reflection(
                 conversations_text=SAMPLE_CONVERSATIONS,
                 date_str="2026-03-02",
             )
 
         # Should return a fallback report, not None (we had conversations)
-        assert result is not None
-        assert "Reflection unavailable" in result or "failed" in result.lower()
+        assert report is not None
+        assert "Reflection unavailable" in report or "failed" in report.lower()
+        assert diff_info["files"] == []
 
 
 # ============================================================
