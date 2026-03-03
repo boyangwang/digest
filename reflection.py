@@ -171,10 +171,20 @@ def _call_agent(prompt: str, timeout: int = 1800) -> tuple[str | None, str | Non
 
             data = json.loads(result.stdout)
             payloads = data.get("payloads", [])
-            if payloads and payloads[0].get("text"):
-                text = payloads[0]["text"]
-                logger.info("Reflection agent responded: %d chars" % len(text))
-                return text, None
+            # Use LAST payload — agent produces multiple text blocks
+            # (initial thoughts, tool calls, then final reflection).
+            # payloads[0] was only the first fragment (61 chars).
+            # payloads[-1] has the complete reflection (3000+ chars).
+            if payloads:
+                # Find last non-empty text payload
+                text = None
+                for p in reversed(payloads):
+                    if p.get("text", "").strip():
+                        text = p["text"]
+                        break
+                if text:
+                    logger.info("Reflection agent responded: %d chars" % len(text))
+                    return text, None
 
             # Empty payloads
             reason = "empty"
