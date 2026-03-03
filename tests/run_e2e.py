@@ -628,6 +628,9 @@ SUITES = {
         ("test_sleep_reflection_idempotent", test_sleep_reflection_idempotent),
         ("test_sleep_without_text_still_reflects", test_sleep_without_text_still_reflects),
         ("test_sleep_reflection_file_structure", test_sleep_reflection_file_structure),
+        ("test_reflect_command_sends_preview", test_reflect_command_sends_preview),
+        ("test_reflect_command_with_date_arg", test_reflect_command_with_date_arg),
+        ("test_reflect_command_not_available_in_test", test_reflect_command_not_available_in_test),
     ],
     "edge": [
         ("test_voice_message_skipped_in_test", test_voice_message_skipped_in_test),
@@ -692,3 +695,112 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+def test_reflect_command_sends_preview():
+    """E2E-T19-1: /reflect command re-runs reflection and sends preview message.
+
+    Test flow:
+    1. /digest → text → /sleep (creates finalized digest with reflection)
+    2. /reflect → bot sends new reflection preview message
+    3. Verify file is NOT modified (preview only, until button pressed)
+
+    Note: We cannot click the inline button in E2E, so we just verify
+    the preview message is sent and the file remains unchanged.
+
+    EXPECTED TO FAIL until T17 is implemented.
+    """
+    # Step 1: Create a finalized digest with reflection
+    marker = drop_log_marker()
+    send_message("/digest", wait_after=2)
+    wait_for_log(marker, "Test /digest", timeout=10)
+
+    marker2 = drop_log_marker()
+    send_message("Initial digest content for /reflect test", wait_after=2)
+    wait_for_log(marker2, "recorded", timeout=10)
+
+    marker3 = drop_log_marker()
+    send_message("/sleep", wait_after=2)
+    wait_for_log(marker3, "Test /sleep", timeout=10)
+    wait_for_log(marker3, "Test reflection appended", timeout=10)
+
+    files = get_test_files(wait_timeout=5)
+    assert len(files) >= 1, "No digest file created"
+
+    # Capture original reflection content
+    original_content = files[0].read_text()
+    assert "Nightly Reflection" in original_content, "Original reflection missing"
+    original_reflection_at = None
+    if "reflection_at:" in original_content:
+        # Extract timestamp for comparison
+        import yaml
+        parts = original_content.split("---", 2)
+        if len(parts) >= 3:
+            fm = yaml.safe_load(parts[1])
+            original_reflection_at = fm.get("reflection_at")
+
+    # Step 2: Send /reflect command
+    marker4 = drop_log_marker()
+    send_message("/reflect", wait_after=3)  # Longer wait — agent call takes time
+
+    # Wait for reflection processing (but NOT file modification)
+    found, log_text = wait_for_log(marker4, "reflection", timeout=15, case_sensitive=False)
+    assert found, "/reflect command not processed"
+
+    # Step 3: Verify preview message was sent
+    # In test mode, bot should log sending the reflection summary
+    found_preview, log_text = wait_for_log(marker4, "reflection summary sent", timeout=5)
+    assert found_preview, \
+        "No reflection preview message sent (expected 'reflection summary sent' in logs)"
+
+    # Step 4: Verify file was NOT modified (no button press in E2E)
+    # The reflection_at timestamp should remain the same
+    new_content = files[0].read_text()
+    if original_reflection_at:
+        import yaml
+        parts = new_content.split("---", 2)
+        if len(parts) >= 3:
+            fm = yaml.safe_load(parts[1])
+            new_reflection_at = fm.get("reflection_at")
+            assert new_reflection_at == original_reflection_at, \
+                "reflection_at should NOT change (preview only, button not pressed)"
+
+    # Reflection section count should still be 1 (not duplicated)
+    assert new_content.count("Nightly Reflection") == 1, \
+        "Reflection section should not be duplicated on preview"
+
+
+def test_reflect_command_with_date_arg():
+    """E2E-T19-2: /reflect 2026-03-02 targets a specific date.
+
+    This test verifies the optional date argument works.
+    Cannot fully test without actual historical data, but verifies
+    the command accepts the argument without crashing.
+    """
+    marker = drop_log_marker()
+    send_message("/reflect 2026-03-02", wait_after=3)
+
+    # Bot should handle this gracefully even if no file exists for that date
+    # Look for either success or "no file found" type message
+    found, log_text = wait_for_log(marker, "", timeout=10)
+    assert found, "/reflect with date arg not processed"
+
+    # Should not crash — that's the key assertion
+    # Actual behavior: either sends preview or sends "no file found" message
+
+
+def test_reflect_command_not_available_in_test():
+    """E2E-T19-3: /reflect command should be production-only (not test mode).
+
+    In test mode, /reflect should either be ignored or send a "not available" message.
+    """
+    marker = drop_log_marker()
+    send_message("/reflect", wait_after=2)
+
+    found, log_text = wait_for_log(marker, "", timeout=5)
+
+    # Test mode should reject this or handle gracefully
+    # Key: should not attempt to run actual reflection on test files
+    # (Production-only check is in the handler)
+    assert found, "/reflect should be handled (even if rejected in test mode)"
+

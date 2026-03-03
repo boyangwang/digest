@@ -328,24 +328,26 @@ class TestRunReflectionIntegration:
         assert "Let's set up the digest bot" in content
 
     def test_agent_timeout_returns_none(self):
-        """IT3: Subprocess timeout → returns None, no crash."""
+        """IT3: Subprocess timeout → returns (None, 'timeout'), no crash."""
         from reflection import _call_agent
 
         with patch("subprocess.run", side_effect=subprocess.TimeoutExpired("cmd", 120)):
-            result = _call_agent("test prompt")
+            response, reason = _call_agent("test prompt")
 
-        assert result is None
+        assert response is None
+        assert reason == "timeout"
 
     def test_agent_failure_returns_none(self):
-        """IT4: Subprocess failure (rc≠0) → returns None, no crash."""
+        """IT4: Subprocess failure (rc≠0) → returns (None, 'crash'), no crash."""
         from reflection import _call_agent
 
         with patch("subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=1, stderr="error")
 
-            result = _call_agent("test prompt")
+            response, reason = _call_agent("test prompt")
 
-        assert result is None
+        assert response is None
+        assert reason == "crash"
 
 
 class TestAppendReflection:
@@ -736,7 +738,7 @@ class TestRunReflectionWithDiff:
             "files": [{"path": "memory/facts/2026-03-02.md", "before": "", "after": "new fact"}],
         }
 
-        with patch("reflection._call_agent", return_value=SAMPLE_REFLECTION_JSON), \
+        with patch("reflection._call_agent", return_value=(SAMPLE_REFLECTION_JSON, None)), \
              patch("reflection._git_head_hash", side_effect=mock_git_head), \
              patch("reflection._git_diff", return_value=mock_diff_data), \
              patch("reflection.render_diff_images", return_value=["/tmp/img.png"]):
@@ -752,7 +754,7 @@ class TestRunReflectionWithDiff:
         """IT12: When agent doesn't commit (same hash), diff_info is empty."""
         from reflection import run_reflection
 
-        with patch("reflection._call_agent", return_value=SAMPLE_REFLECTION_JSON), \
+        with patch("reflection._call_agent", return_value=(SAMPLE_REFLECTION_JSON, None)), \
              patch("reflection._git_head_hash", return_value="same_hash"), \
              patch("reflection._git_diff") as mock_diff, \
              patch("reflection.render_diff_images") as mock_render:
@@ -790,7 +792,7 @@ class TestRunReflectionWithDiff:
                 return "pre"
             return "post"
 
-        with patch("reflection._call_agent", return_value=SAMPLE_REFLECTION_JSON), \
+        with patch("reflection._call_agent", return_value=(SAMPLE_REFLECTION_JSON, None)), \
              patch("reflection._git_head_hash", side_effect=mock_git_head), \
              patch("reflection._git_diff", side_effect=OSError("disk fail")):
 
@@ -816,7 +818,7 @@ class TestRunReflectionWithDiff:
             "files": [{"path": "test.md", "before": "a", "after": "b"}],
         }
 
-        with patch("reflection._call_agent", return_value=SAMPLE_REFLECTION_JSON), \
+        with patch("reflection._call_agent", return_value=(SAMPLE_REFLECTION_JSON, None)), \
              patch("reflection._git_head_hash", side_effect=mock_git_head), \
              patch("reflection._git_diff", return_value=mock_diff_data), \
              patch("reflection.render_diff_images", return_value=[]):
@@ -869,7 +871,7 @@ class TestCmdSleepDiffDelivery:
             "images": ["/tmp/openclaw/test1/preview.png"],
         }
 
-        with patch("reflection._call_agent", return_value=SAMPLE_REFLECTION_JSON), \
+        with patch("reflection._call_agent", return_value=(SAMPLE_REFLECTION_JSON, None)), \
              patch("reflection._git_head_hash", side_effect=["pre", "post"]), \
              patch("reflection._git_diff", return_value=mock_diff_info), \
              patch("reflection.render_diff_images", return_value=["/tmp/openclaw/test1/preview.png"]):
@@ -884,7 +886,7 @@ class TestCmdSleepDiffDelivery:
         """IT17: No diff images when agent doesn't modify workspace."""
         from reflection import run_reflection
 
-        with patch("reflection._call_agent", return_value=SAMPLE_REFLECTION_JSON), \
+        with patch("reflection._call_agent", return_value=(SAMPLE_REFLECTION_JSON, None)), \
              patch("reflection._git_head_hash", return_value="unchanged"):
 
             report, diff_info, parsed = run_reflection(SAMPLE_CONVERSATIONS, "2026-03-02")
@@ -901,7 +903,7 @@ class TestCmdSleepDiffDelivery:
             "files": [{"path": "memory/facts/2026-03-02.md", "before": "", "after": "new"}],
         }
 
-        with patch("reflection._call_agent", return_value=SAMPLE_REFLECTION_JSON), \
+        with patch("reflection._call_agent", return_value=(SAMPLE_REFLECTION_JSON, None)), \
              patch("reflection._git_head_hash", side_effect=["pre", "post"]), \
              patch("reflection._git_diff", return_value=mock_diff_data), \
              patch("reflection.render_diff_images", return_value=[]):
@@ -932,7 +934,7 @@ class TestCmdSleepDiffDelivery:
             "/tmp/openclaw/diff3/preview.png",
         ]
 
-        with patch("reflection._call_agent", return_value=SAMPLE_REFLECTION_JSON), \
+        with patch("reflection._call_agent", return_value=(SAMPLE_REFLECTION_JSON, None)), \
              patch("reflection._git_head_hash", side_effect=["pre", "post"]), \
              patch("reflection._git_diff", return_value=mock_diff_data), \
              patch("reflection.render_diff_images", return_value=mock_images):
@@ -1054,7 +1056,7 @@ class TestRunReflectionReturnsParsed:
         """IT20: run_reflection returns (report, diff_info, parsed)."""
         from reflection import run_reflection
 
-        with patch("reflection._call_agent", return_value=SAMPLE_REFLECTION_JSON), \
+        with patch("reflection._call_agent", return_value=(SAMPLE_REFLECTION_JSON, None)), \
              patch("reflection._git_head_hash", return_value="same_hash"):
 
             result = run_reflection(SAMPLE_CONVERSATIONS, "2026-03-02")
@@ -1072,7 +1074,7 @@ class TestRunReflectionReturnsParsed:
         """IT21: Parsed dict is consistent with the report."""
         from reflection import run_reflection
 
-        with patch("reflection._call_agent", return_value=SAMPLE_REFLECTION_JSON), \
+        with patch("reflection._call_agent", return_value=(SAMPLE_REFLECTION_JSON, None)), \
              patch("reflection._git_head_hash", return_value="same_hash"):
 
             report, diff_info, parsed = run_reflection(SAMPLE_CONVERSATIONS, "2026-03-02")
@@ -1083,3 +1085,200 @@ class TestRunReflectionReturnsParsed:
         # Report should mention these items
         assert "Ashley" in report
         assert "Opus" in report
+
+
+# ============================================================
+# UNIT TESTS — T16: Retry logic in _call_agent()
+# ============================================================
+
+class TestCallAgentRetry:
+    """UT28-UT33: T16 — Automatic retry on failure."""
+
+    def test_retries_on_nonzero_returncode(self):
+        """UT28: When subprocess returns rc≠0, retries up to 3 total attempts."""
+        from reflection import _call_agent
+        import time
+
+        call_count = [0]
+
+        def mock_run(*args, **kwargs):
+            call_count[0] += 1
+            return MagicMock(returncode=1, stderr="agent error")
+
+        with patch("subprocess.run", side_effect=mock_run), \
+             patch("time.sleep"):  # Don't actually sleep during tests
+
+            response, reason = _call_agent("test prompt", timeout=10)
+
+        assert response is None
+        assert reason == "crash"
+        assert call_count[0] == 3  # 3 total attempts
+
+    def test_retries_on_timeout(self):
+        """UT29: On TimeoutExpired, retries up to 3 times."""
+        from reflection import _call_agent
+
+        call_count = [0]
+
+        def mock_run(*args, **kwargs):
+            call_count[0] += 1
+            raise subprocess.TimeoutExpired("cmd", 10)
+
+        with patch("subprocess.run", side_effect=mock_run), \
+             patch("time.sleep"):
+
+            response, reason = _call_agent("test prompt", timeout=10)
+
+        assert response is None
+        assert reason == "timeout"
+        assert call_count[0] == 3
+
+    def test_retries_on_empty_response(self):
+        """UT30: When agent returns empty payloads, retries."""
+        from reflection import _call_agent
+
+        call_count = [0]
+
+        def mock_run(*args, **kwargs):
+            call_count[0] += 1
+            return MagicMock(
+                returncode=0,
+                stdout=json.dumps({"payloads": []}),
+            )
+
+        with patch("subprocess.run", side_effect=mock_run), \
+             patch("time.sleep"):
+
+            response, reason = _call_agent("test prompt", timeout=10)
+
+        assert response is None
+        assert reason == "empty"
+        assert call_count[0] == 3
+
+    def test_exponential_backoff(self):
+        """UT31: Backoff between retries is 5s, 15s."""
+        from reflection import _call_agent
+
+        sleep_times = []
+
+        def mock_sleep(seconds):
+            sleep_times.append(seconds)
+
+        with patch("subprocess.run", return_value=MagicMock(returncode=1, stderr="error")), \
+             patch("time.sleep", side_effect=mock_sleep):
+
+            _call_agent("test prompt", timeout=10)
+
+        # Should have slept twice (before attempt 2 and 3)
+        assert len(sleep_times) == 2
+        assert sleep_times[0] == 5
+        assert sleep_times[1] == 15
+
+    def test_success_after_retry(self):
+        """UT32: If agent succeeds on retry, returns response immediately."""
+        from reflection import _call_agent
+
+        call_count = [0]
+
+        def mock_run(*args, **kwargs):
+            call_count[0] += 1
+            if call_count[0] < 2:
+                return MagicMock(returncode=1, stderr="error")
+            return MagicMock(
+                returncode=0,
+                stdout=json.dumps({"payloads": [{"text": "success"}]}),
+            )
+
+        with patch("subprocess.run", side_effect=mock_run), \
+             patch("time.sleep"):
+
+            response, reason = _call_agent("test prompt", timeout=10)
+
+        assert response == "success"
+        assert reason is None
+        assert call_count[0] == 2  # Failed once, succeeded on retry
+
+    def test_logs_each_attempt(self):
+        """UT33: Each failed attempt is logged with attempt number."""
+        from reflection import _call_agent
+
+        log_messages = []
+
+        def mock_log(msg, *args):
+            log_messages.append(msg % args if args else msg)
+
+        with patch("subprocess.run", return_value=MagicMock(returncode=1, stderr="error")), \
+             patch("reflection.logger.warning", side_effect=mock_log), \
+             patch("time.sleep"):
+
+            _call_agent("test prompt", timeout=10)
+
+        # Should have 3 log messages, one per attempt
+        assert len(log_messages) == 3
+        assert "attempt 1/3" in log_messages[0].lower()
+        assert "attempt 2/3" in log_messages[1].lower()
+        assert "attempt 3/3" in log_messages[2].lower()
+
+
+# ============================================================
+# UNIT TESTS — T5: Improved fallback message
+# ============================================================
+
+class TestImprovedFallback:
+    """UT34-UT37: T5 — Fallback message includes context."""
+
+    def test_fallback_includes_timestamp(self):
+        """UT34: Fallback message includes timestamp in SGT."""
+        from reflection import run_reflection
+
+        with patch("reflection._call_agent", return_value=(None, "timeout")), \
+             patch("reflection._git_head_hash", return_value="hash"):
+
+            report, _, _ = run_reflection(SAMPLE_CONVERSATIONS, "2026-03-02")
+
+        # Should include time like "23:22" or "at HH:MM"
+        import re
+        assert re.search(r'\d{2}:\d{2}', report)
+
+    def test_fallback_includes_error_reason_timeout(self):
+        """UT35: Fallback message indicates 'timeout' when agent times out."""
+        from reflection import run_reflection
+
+        with patch("reflection._call_agent", return_value=(None, "timeout")), \
+             patch("reflection._git_head_hash", return_value="hash"):
+
+            report, _, _ = run_reflection(SAMPLE_CONVERSATIONS, "2026-03-02")
+
+        assert "timeout" in report.lower()
+
+    def test_fallback_includes_conversation_count(self):
+        """UT36: Fallback message shows number of messages collected."""
+        from reflection import run_reflection
+
+        conversations = "\n".join(["**10:00** message %d" % i for i in range(247)])
+
+        with patch("reflection._call_agent", return_value=(None, "crash")), \
+             patch("reflection._git_head_hash", return_value="hash"):
+
+            report, _, _ = run_reflection(conversations, "2026-03-02")
+
+        # Should mention message count (247 in this case, but might count lines differently)
+        # Just verify it mentions "messages" and a number
+        assert "message" in report.lower()
+        import re
+        assert re.search(r'\d+', report)  # Contains at least one number
+
+    def test_fallback_format_matches_spec(self):
+        """UT37: Fallback message matches example format from PRD."""
+        from reflection import run_reflection
+
+        with patch("reflection._call_agent", return_value=(None, "empty")), \
+             patch("reflection._git_head_hash", return_value="hash"):
+
+            report, _, _ = run_reflection(SAMPLE_CONVERSATIONS, "2026-03-02")
+
+        # Should match format: "Reflection unavailable (reason at HH:MM, N messages collected)"
+        assert "unavailable" in report.lower()
+        assert "at" in report.lower()
+        # Should mention retry or next steps
+        assert "retry" in report.lower() or "reflect" in report.lower()

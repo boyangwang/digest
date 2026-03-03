@@ -378,6 +378,52 @@ def append_reflection(report_text, filepath=None):
         return False
 
 
+def replace_reflection(report_text, filepath):
+    """Replace existing reflection section in a finalized digest (for /reflect command).
+
+    Used when re-running reflection on an already-finalized digest.
+    Finds the existing "# 🪞 Nightly Reflection" section and replaces
+    everything from that header to the end of file with the new report.
+
+    Updates YAML frontmatter: reflection_at (new timestamp), reflection_model.
+    Uses atomic write pattern (.tmp → rename).
+
+    Args:
+        report_text: New reflection markdown (starting with "# 🪞 Nightly Reflection")
+        filepath: Path to the finalized digest file
+
+    Returns:
+        True on success, False if file doesn't exist or reflection section is missing
+    """
+    if not filepath or not filepath.exists():
+        return False
+
+    try:
+        content = filepath.read_text(encoding="utf-8")
+        fm, body = _parse_frontmatter(content)
+
+        # Check if reflection section exists
+        reflection_marker = "# 🪞 Nightly Reflection"
+        if reflection_marker not in body:
+            return False
+
+        # Split at reflection marker — keep everything before it
+        before_reflection = body.split(reflection_marker)[0]
+
+        # Update YAML fields
+        fm["reflection_at"] = datetime.now(SGT).isoformat()
+        fm["reflection_model"] = "opus"
+
+        # Rebuild: before + new reflection
+        body = before_reflection.rstrip() + "\n\n" + report_text.rstrip() + "\n"
+
+        new_content = _serialize_frontmatter(fm, body)
+        _atomic_write(filepath, new_content)
+        return True
+    except Exception:
+        return False
+
+
 def finalize():
     """Finalize the active digest (/sleep received).
 

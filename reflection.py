@@ -141,45 +141,85 @@ def _get_env():
     return env
 
 
-def _call_agent(prompt: str, timeout: int = 1800) -> str | None:
-    """Call the Opus agent for reflection. Returns response text or None."""
-    try:
-        result = subprocess.run(
-            [
-                "openclaw", "agent", "--local",
-                "--session-id", REFLECTION_SESSION_ID,
-                "--message", prompt,
-                "--json",
-                "--timeout", str(timeout),
-            ],
-            capture_output=True, text=True, timeout=timeout + 30,
-            env=_get_env(),
-        )
+def _call_agent(prompt: str, timeout: int = 1800) -> tuple[str | None, str | None]:
+    """Call the Opus agent for reflection with automatic retry.
 
-        if result.returncode != 0:
-            logger.warning("Reflection agent failed (rc=%d): %s" % (
-                result.returncode, result.stderr[:300]))
-            return None
+    Returns (response_text, error_reason) tuple:
+      - On success: (text, None)
+      - On failure: (None, reason) where reason is "timeout", "crash", or "empty"
 
-        data = json.loads(result.stdout)
-        payloads = data.get("payloads", [])
-        if payloads and payloads[0].get("text"):
-            text = payloads[0]["text"]
-            logger.info("Reflection agent responded: %d chars" % len(text))
-            return text
+    Retries up to 3 total attempts with exponential backoff (5s, 15s).
+    """
+    import time
 
-        logger.warning("Reflection agent returned empty payloads")
-        return None
+    max_attempts = 3
+    backoff_times = [0, 5, 15]  # No delay before first attempt, then 5s, 15s
 
-    except subprocess.TimeoutExpired:
-        logger.warning("Reflection agent timed out (%ds)" % timeout)
-        return None
-    except json.JSONDecodeError as e:
-        logger.warning("Reflection response not JSON: %s" % e)
-        return None
-    except Exception as e:
-        logger.warning("Reflection agent exception: %s" % e)
-        return None
+    for attempt in range(1, max_attempts + 1):
+        # Sleep before retry (not before first attempt)
+        if attempt > 1:
+            time.sleep(backoff_times[attempt - 1])
+
+        try:
+            result = subprocess.run(
+                [
+                    "openclaw", "agent", "--local",
+                    "--session-id", REFLECTION_SESSION_ID,
+                    "--message", prompt,
+                    "--json",
+                    "--timeout", str(timeout),
+                ],
+                capture_output=True, text=True, timeout=timeout + 30,
+                env=_get_env(),
+            )
+
+            if result.returncode != 0:
+                reason = "crash"
+                logger.warning("Reflection agent attempt %d/%d failed: rc=%d, %s" % (
+                    attempt, max_attempts, result.returncode, result.stderr[:300]))
+                if attempt < max_attempts:
+                    continue
+                return None, reason
+
+            data = json.loads(result.stdout)
+            payloads = data.get("payloads", [])
+            if payloads and payloads[0].get("text"):
+                text = payloads[0]["text"]
+                logger.info("Reflection agent responded: %d chars" % len(text))
+                return text, None
+
+            # Empty payloads
+            reason = "empty"
+            logger.warning("Reflection agent attempt %d/%d failed: empty payloads" % (
+                attempt, max_attempts))
+            if attempt < max_attempts:
+                continue
+            return None, reason
+
+        except subprocess.TimeoutExpired:
+            reason = "timeout"
+            logger.warning("Reflection agent attempt %d/%d failed: timeout (%ds)" % (
+                attempt, max_attempts, timeout))
+            if attempt < max_attempts:
+                continue
+            return None, reason
+        except json.JSONDecodeError as e:
+            reason = "crash"
+            logger.warning("Reflection agent attempt %d/%d failed: not JSON: %s" % (
+                attempt, max_attempts, e))
+            if attempt < max_attempts:
+                continue
+            return None, reason
+        except Exception as e:
+            reason = "crash"
+            logger.warning("Reflection agent attempt %d/%d failed: exception: %s" % (
+                attempt, max_attempts, e))
+            if attempt < max_attempts:
+                continue
+            return None, reason
+
+    # Should never reach here, but just in case
+    return None, "crash"
 
 
 # ============================================================
@@ -616,16 +656,29 @@ def run_reflection(conversations_text: str, date_str: str) -> tuple[str | None, 
         pre_hash = _git_head_hash()
         logger.info("Pre-reflection git hash: %s" % pre_hash)
 
-        # Call agent
-        response = _call_agent(prompt)
+        # Call agent (now returns tuple with error reason)
+        response, error_reason = _call_agent(prompt)
 
         if not response:
+            # Build informative fallback message
+            now = datetime.now(SGT)
+            timestamp = now.strftime("%H:%M")
+            # Count messages (rough estimate: lines starting with **)
+            msg_count = len([line for line in conversations_text.split("\n") if line.strip().startswith("**")])
+            
+            reason_text = {
+                "timeout": "agent timeout",
+                "crash": "agent crashed",
+                "empty": "empty response",
+            }.get(error_reason, "agent failed")
+            
             logger.warning("Reflection agent returned no response — fallback.")
-            return (
-                "# 🪞 Nightly Reflection\n\n_Reflection unavailable — agent failed to respond._\n",
-                empty_diff,
-                empty_parsed,
-            )
+            fallback = (
+                "# 🪞 Nightly Reflection\n\n"
+                "_Reflection unavailable (%s at %s, %d messages collected). "
+                "Will retry on next /reflect._\n"
+            ) % (reason_text, timestamp, msg_count)
+            return (fallback, empty_diff, empty_parsed)
 
         # Parse response
         parsed = parse_reflection_response(response)

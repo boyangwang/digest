@@ -737,3 +737,240 @@ class TestYAMLHelpers:
         fp = tmp_path / "test.md"
         recorder._atomic_write(fp, "中文 🌙 日本語")
         assert "中文" in fp.read_text()
+
+
+# ============================================================
+# replace_reflection() — T17 tests (DIGEST-007)
+# ============================================================
+
+class TestReplaceReflection:
+    """Unit tests for replace_reflection() — in-place reflection replacement for /reflect command."""
+
+    def test_replace_existing_reflection(self, tmp_path):
+        """UT-T17-1: Replace existing reflection section in finalized digest."""
+        digest_dir = tmp_path / "digests"
+        digest_dir.mkdir()
+        
+        # Create a finalized digest with an existing reflection
+        filepath = digest_dir / "2026-03-02-2230.md"
+        original_content = """---
+status: "final"
+generated_at: "2026-03-02T22:30:00+08:00"
+coverage_from: "2026-03-02T08:00:00+08:00"
+coverage_to: "2026-03-02T22:30:00+08:00"
+finalized_at: "2026-03-02T23:00:00+08:00"
+reflection_at: "2026-03-02T23:00:00+08:00"
+reflection_model: "opus"
+---
+
+# Doudou's Summary
+
+Session: Test Session
+Messages: 10
+Summary:
+Test summary content
+
+# Boyang's Recap
+
+**22:45** Had a productive day
+
+# 🪞 Nightly Reflection
+
+> Old reflection content
+
+### 📌 Durable Facts (0)
+_None identified today._
+
+### 📊 Stats
+- Items extracted: 0
+"""
+        filepath.write_text(original_content)
+        
+        # New reflection report
+        new_report = """# 🪞 Nightly Reflection
+
+> Extracted by Doudou (Opus). All items stored in workspace.
+
+### 📌 Durable Facts (2)
+- **[People/Ashley]** Birthday is March 15
+- **[Health]** VO2max measured at 46
+
+### 📊 Stats
+- Messages processed: 50
+- Items extracted: 8
+- Model: Opus
+"""
+        
+        # Import and call replace_reflection
+        from recorder import replace_reflection
+        success = replace_reflection(new_report, filepath)
+        assert success, "replace_reflection should return True on success"
+        
+        # Verify content was replaced
+        content = filepath.read_text()
+        assert "Birthday is March 15" in content, "New reflection content should be in file"
+        assert "Old reflection content" not in content, "Old reflection should be removed"
+        assert "Had a productive day" in content, "Boyang's recap should be preserved"
+        assert "Test summary content" in content, "Doudou's summary should be preserved"
+        
+        # Verify only ONE reflection section
+        assert content.count("# 🪞 Nightly Reflection") == 1, "Should have exactly one reflection section"
+        
+        # Verify YAML frontmatter was updated
+        assert "reflection_at:" in content
+        assert "reflection_model:" in content
+
+    def test_replace_reflection_updates_yaml(self, tmp_path):
+        """UT-T17-2: YAML frontmatter gets updated with new reflection_at and reflection_model."""
+        digest_dir = tmp_path / "digests"
+        digest_dir.mkdir()
+        
+        filepath = digest_dir / "2026-03-02-2230.md"
+        original_content = """---
+status: "final"
+generated_at: "2026-03-02T22:30:00+08:00"
+reflection_at: "2026-03-02T23:00:00+08:00"
+reflection_model: "opus"
+---
+
+# Doudou's Summary
+
+Test content
+
+# Boyang's Recap
+
+**22:45** Test recap
+
+# 🪞 Nightly Reflection
+
+Old reflection
+"""
+        filepath.write_text(original_content)
+        
+        new_report = "# 🪞 Nightly Reflection\n\nNew reflection content\n"
+        
+        from recorder import replace_reflection
+        replace_reflection(new_report, filepath)
+        
+        content = filepath.read_text()
+        
+        # Parse YAML to verify structure
+        import yaml
+        parts = content.split("---", 2)
+        fm = yaml.safe_load(parts[1])
+        
+        # reflection_at should be updated to a new timestamp
+        old_time = datetime.fromisoformat("2026-03-02T23:00:00+08:00")
+        new_time = datetime.fromisoformat(fm["reflection_at"])
+        assert new_time > old_time, "reflection_at should be updated to a newer timestamp"
+        
+        # reflection_model should be present
+        assert fm["reflection_model"] == "opus"
+
+    def test_replace_reflection_nonexistent_file(self):
+        """UT-T17-3: Returns False if file doesn't exist."""
+        from recorder import replace_reflection
+        result = replace_reflection("# New reflection", Path("/nonexistent/file.md"))
+        assert result is False, "Should return False for nonexistent file"
+
+    def test_replace_reflection_missing_section(self, tmp_path):
+        """UT-T17-4: Returns False if reflection section is missing (can't replace what doesn't exist)."""
+        filepath = tmp_path / "no-reflection.md"
+        content = """---
+status: "final"
+---
+
+# Doudou's Summary
+
+Test
+
+# Boyang's Recap
+
+Test recap
+"""
+        filepath.write_text(content)
+        
+        from recorder import replace_reflection
+        new_report = "# 🪞 Nightly Reflection\n\nNew content\n"
+        result = replace_reflection(new_report, filepath)
+        
+        # Should return False because there's no existing reflection to replace
+        assert result is False, "Should return False when reflection section is missing"
+
+    def test_replace_reflection_preserves_order(self, tmp_path):
+        """UT-T17-5: File structure order is preserved: Summary → Recap → Reflection."""
+        filepath = tmp_path / "test.md"
+        original = """---
+status: "final"
+reflection_at: "2026-03-02T23:00:00+08:00"
+reflection_model: "opus"
+---
+
+# Doudou's Summary
+
+Summary content here
+
+# Boyang's Recap
+
+**22:45** Recap entry 1
+**23:00** Recap entry 2
+
+# 🪞 Nightly Reflection
+
+Old reflection
+"""
+        filepath.write_text(original)
+        
+        new_report = """# 🪞 Nightly Reflection
+
+New reflection content with much more detail
+"""
+        
+        from recorder import replace_reflection
+        replace_reflection(new_report, filepath)
+        
+        content = filepath.read_text()
+        
+        # Verify order
+        summary_pos = content.index("# Doudou's Summary")
+        recap_pos = content.index("# Boyang's Recap")
+        reflection_pos = content.index("# 🪞 Nightly Reflection")
+        
+        assert summary_pos < recap_pos < reflection_pos, \
+            "Order must be: Summary → Recap → Reflection"
+        
+        # Verify recap entries are preserved
+        assert "Recap entry 1" in content
+        assert "Recap entry 2" in content
+        assert "Summary content here" in content
+
+    def test_replace_reflection_atomic_write(self, tmp_path):
+        """UT-T17-6: Uses atomic write pattern (.tmp → rename), no .tmp files left behind."""
+        filepath = tmp_path / "test.md"
+        original = """---
+status: "final"
+reflection_at: "2026-03-02T23:00:00+08:00"
+reflection_model: "opus"
+---
+
+# Doudou's Summary
+
+Test
+
+# Boyang's Recap
+
+Test
+
+# 🪞 Nightly Reflection
+
+Old
+"""
+        filepath.write_text(original)
+        
+        from recorder import replace_reflection
+        replace_reflection("# 🪞 Nightly Reflection\n\nNew\n", filepath)
+        
+        # Verify no .tmp file left behind
+        tmp_files = list(tmp_path.glob("*.tmp"))
+        assert len(tmp_files) == 0, "No .tmp files should remain after atomic write"
+
