@@ -1,8 +1,8 @@
 # DIGEST-009: Collection Engine — Parallel, Retriable, Supersedable
 
-> **Status:** 🔴 Draft
+> **Status:** ✅ Complete — E2E verified 2026-03-03
 > **Priority:** P1
-> **Tasks:** 0/14 complete
+> **Tasks:** 12/14 complete (T13-T14 docs pending)
 > **Created:** 2026-03-03
 > **Depends on:** prd-singleton-guard.md (should be implemented first)
 
