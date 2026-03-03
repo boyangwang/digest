@@ -528,13 +528,18 @@ def _git_diff(pre_hash: str, post_hash: str) -> dict:
 
 
 def render_diff_images(diff_data: dict, date_str: str) -> list[str]:
-    """Render visual diff PNGs using openclaw agent --local with diffs tool.
+    """Render visual diff PNGs using Node.js script + playwright.
 
-    Sends one agent call per changed file. Returns list of PNG paths.
-    Never raises — returns empty list on failure.
+    Zero LLM calls. Direct code: diff → HTML → Chromium screenshot.
+    Returns list of PNG paths. Never raises — returns empty list on failure.
     """
     images = []
     if not diff_data.get("files"):
+        return images
+
+    script_path = os.path.join(os.path.dirname(__file__), "scripts", "render_diff.mjs")
+    if not os.path.exists(script_path):
+        logger.warning("render_diff.mjs not found at %s" % script_path)
         return images
 
     for file_info in diff_data["files"]:
@@ -542,7 +547,6 @@ def render_diff_images(diff_data: dict, date_str: str) -> list[str]:
         before = file_info["before"]
         after = file_info["after"]
 
-        # Skip if no actual change
         if before == after:
             continue
 
@@ -553,58 +557,26 @@ def render_diff_images(diff_data: dict, date_str: str) -> list[str]:
         if len(after) > max_chars:
             after = after[:max_chars] + "\n... (truncated)"
 
+        before_path = "/tmp/reflection-diff-before-%s.txt" % filepath.replace("/", "_")
+        after_path = "/tmp/reflection-diff-after-%s.txt" % filepath.replace("/", "_")
+        safe_name = re.sub(r'[^a-zA-Z0-9-]', '-', filepath)[:40]
+        output_path = "/tmp/reflection-diff-%s-%s.png" % (date_str, safe_name)
+
         try:
-            # Write before/after to temp files so agent can read them
-            # (avoids shell escaping issues with large content in --message)
-            before_path = "/tmp/reflection-diff-before-%s.txt" % filepath.replace("/", "_")
-            after_path = "/tmp/reflection-diff-after-%s.txt" % filepath.replace("/", "_")
             with open(before_path, "w") as f:
                 f.write(before)
             with open(after_path, "w") as f:
                 f.write(after)
 
-            msg = (
-                'Read the file at %s as "before" text and the file at %s as "after" text. '
-                'Then call the diffs tool with: before=<contents of before file>, '
-                'after=<contents of after file>, path="%s", mode="image". '
-                'Reply with ONLY the imagePath from the diffs tool result. Nothing else.'
-                % (before_path, after_path, filepath)
-            )
-
-            # Use unique session ID per file to avoid lock conflicts
-            safe_name = re.sub(r'[^a-zA-Z0-9-]', '-', filepath)[:40]
-            session_id = "diff-render-%s" % safe_name
-
-            # Clear any stale lock before calling
-            lock_path = "/Users/claw/.openclaw/agents/main/sessions/%s.jsonl.lock" % session_id
-            try:
-                os.unlink(lock_path)
-            except FileNotFoundError:
-                pass
-
             result = subprocess.run(
-                [
-                    "openclaw", "agent", "--local",
-                    "--session-id", session_id,
-                    "--message", msg,
-                    "--json",
-                    "--timeout", "120",
-                ],
-                capture_output=True, text=True, timeout=150,
+                ["node", script_path, before_path, after_path, filepath, output_path],
+                capture_output=True, text=True, timeout=30,
                 env=_get_env(),
             )
 
-            if result.returncode == 0:
-                data = json.loads(result.stdout)
-                text = data.get("payloads", [{}])[0].get("text", "")
-                # Extract path from response
-                for line in text.split("\n"):
-                    line = line.strip().strip("`")
-                    if "/tmp/openclaw" in line and ".png" in line:
-                        if os.path.exists(line):
-                            images.append(line)
-                            logger.info("Rendered diff image: %s → %s" % (filepath, line))
-                        break
+            if result.returncode == 0 and os.path.exists(output_path):
+                images.append(output_path)
+                logger.info("Rendered diff image: %s → %s" % (filepath, output_path))
             else:
                 logger.warning("Diff render failed for %s (rc=%d): %s" % (
                     filepath, result.returncode, result.stderr[:200]))
@@ -612,7 +584,6 @@ def render_diff_images(diff_data: dict, date_str: str) -> list[str]:
         except Exception as e:
             logger.warning("Diff render exception for %s: %s" % (filepath, e))
         finally:
-            # Clean up temp files
             for p in [before_path, after_path]:
                 try:
                     os.unlink(p)

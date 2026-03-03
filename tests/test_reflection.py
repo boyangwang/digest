@@ -640,14 +640,11 @@ class TestRenderDiffImages:
         ]}
 
         with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(
-                returncode=0,
-                stdout=json.dumps({"payloads": [{"text": "/tmp/openclaw/test/preview.png"}]}),
-            )
+            mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
             with patch("os.path.exists", return_value=True):
                 result = render_diff_images(diff_data, "2026-03-02")
 
-        # Should call subprocess for each file
+        # Should call node script for each file
         assert mock_run.call_count == 2
         assert len(result) == 2
 
@@ -665,18 +662,15 @@ class TestRenderDiffImages:
         def side_effect(args, **kwargs):
             call_count[0] += 1
             if call_count[0] == 1:
-                return MagicMock(returncode=1, stderr="error")
-            return MagicMock(
-                returncode=0,
-                stdout=json.dumps({"payloads": [{"text": "/tmp/openclaw/ok/preview.png"}]}),
-            )
+                return MagicMock(returncode=1, stderr="error", stdout="")
+            return MagicMock(returncode=0, stdout="", stderr="")
 
         with patch("subprocess.run", side_effect=side_effect):
             with patch("os.path.exists", return_value=True):
                 result = render_diff_images(diff_data, "2026-03-02")
 
         assert len(result) == 1
-        assert "ok/preview.png" in result[0]
+        assert "success-md" in result[0]
 
     def test_truncates_large_files(self):
         """UT21: Files larger than 50KB are truncated before rendering."""
