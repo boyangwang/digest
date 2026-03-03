@@ -8,6 +8,83 @@ them to an Obsidian vault for archival.
 
 ---
 
+## ⚠️ Mandatory Development Process
+
+> **Every agent working on this codebase MUST follow these steps in order.**
+> **Skipping steps = broken product. No exceptions.**
+>
+> **Track all work in [`TODO.md`](TODO.md)** — active bugs, PRDs, backlog, completed.
+
+### Step 0: Intake
+
+Bug reported or feature requested → create PRD.
+
+1. Create `specs/prd-<descriptive-name>.md` using [PRD template](#prd-template) below
+2. Set status badge: `🔴 Draft`
+3. Add entry to [`TODO.md`](TODO.md) Active Work table
+4. Commit: `spec: PRD for <name>`
+5. **STOP.** Do not write code or tests yet. Wait for approval or proceed only if PRD was written collaboratively with Boyang.
+
+### Step 1: TDD — Write Failing Tests
+
+PRD approved → write tests that prove it's broken.
+
+1. Update PRD status: `🟡 Active — writing tests`
+2. Update `TODO.md` status + "Next Step"
+3. For each task T1..TN: write a **failing** test
+   - Unit/integration → `tests/test_<module>.py`
+   - E2E → `tests/run_e2e.py`
+4. Confirm new tests **FAIL** and existing tests still **PASS**
+5. Commit: `test: failing tests for <PRD> (T1-TN)`
+
+### Step 2: Implement
+
+Failing tests exist → make them green, one task at a time.
+
+1. Update PRD status: `🟡 Active — implementing`
+2. For each task: implement → run test → check `- [x]` in PRD → commit `feat: T1 — desc`
+3. After all tasks: run **ALL** unit/integration tests individually
+4. Commit: `feat: all tasks complete for <PRD>`
+
+### Step 3: E2E Verification
+
+All tasks done → prove it works end-to-end.
+
+1. Update PRD status: `🔵 Testing`
+2. Run: `python3 tests/run_e2e.py --test all`
+3. If failures: fix → re-run ALL tests → repeat until green
+4. Record in PRD: `Unit: XXX passed | E2E: X/X passed | Date: YYYY-MM-DD`
+5. Commit: `test: E2E verified for <PRD>`
+
+### Step 4: Deploy & Close
+
+All green → ship it.
+
+1. Restart: `launchctl kickstart -k gui/$(id -u)/com.digest-bot`
+2. Verify: `pgrep -f "digest-bot/main.py"`
+3. **Send a real message to the bot** to verify production behavior
+4. Update PRD status: `🟢 Done — Completed YYYY-MM-DD`
+5. Move entry in `TODO.md` to "Completed" table
+6. Commit: `docs: close <PRD>`
+7. Notify Boyang
+
+### Step 5: Post-Deploy Monitoring
+
+1. Watch `/tmp/digest-bot.log` for errors
+2. For nightly features: wait for natural trigger or ask Boyang to test
+3. Errors found → new PRD (Step 0)
+
+### Rules
+
+1. **No code without a PRD.** Even quick fixes.
+2. **No implementation without failing tests.** TDD is not optional.
+3. **No "done" without E2E green.** If you can't prove it, it doesn't work.
+4. **Every status change gets a commit.** Git history = audit trail.
+5. **`TODO.md` is always current.** Stale = fix it first.
+6. **One PRD at a time per agent.** Finish or park before starting another.
+
+---
+
 ## Architecture
 
 ```
@@ -52,6 +129,8 @@ IDLE   → /reflect → re-run reflection on last finalized digest → IDLE
 
 ```
 digest-bot/
+├── TODO.md              # ⚠️ START HERE — all work tracking
+├── README.md            # This file — process + architecture
 ├── main.py              # Telegram bot, command handlers, state machine
 ├── collector.py         # Read OpenClaw JSONL transcripts, extract & filter
 ├── recorder.py          # Atomic writes to Obsidian vault, YAML frontmatter
@@ -61,48 +140,19 @@ digest-bot/
 ├── stt.py               # Voice message transcription (OpenAI Whisper)
 ├── config.py            # All tokens, paths, constants
 │
-├── specs/               # 📋 All PRDs, specs, and bug reports
+├── specs/               # 📋 PRDs and specs
 │   ├── SPEC.md          # Core spec — 27 numbered definitions
 │   ├── TESTING.md       # Three-tier testing strategy
-│   ├── prd-*.md         # PRDs for features and bugfixes
-│   └── *.md             # Historical specs and battleplans
+│   └── prd-*.md         # Individual PRDs (features + bugfixes)
 │
 ├── tests/               # 🧪 Test suites
 │   ├── test_*.py        # Unit + integration tests (pytest)
-│   ├── run_e2e.py       # Standalone E2E runner (NOT pytest — see note below)
+│   ├── run_e2e.py       # Standalone E2E runner (NOT pytest)
 │   └── conftest.py      # Shared fixtures
 │
-├── scripts/             # 🔧 Utility scripts
-│   └── backfill.py      # Historical digest backfill (Feb 7 → Mar 1)
-│
-└── venv/                # Python virtual environment
+└── scripts/             # 🔧 Utility scripts
+    └── backfill.py      # Historical digest backfill (Feb 7 → Mar 1)
 ```
-
----
-
-## Specs & PRDs
-
-**Start with [`TODO.md`](TODO.md)** — it tracks every bug, PRD, and their status. Then read [`specs/SOP.md`](specs/SOP.md) for the mandatory workflow.
-
-### Workflow (Mandatory SOP)
-
-**Full process in [`specs/SOP.md`](specs/SOP.md).** Summary:
-
-1. **Intake** → PRD in `specs/prd-<name>.md`, add to INDEX.md
-2. **TDD** → Write failing tests first
-3. **Implement** → Check off tasks, commit per task
-4. **E2E** → `python3 tests/run_e2e.py` must pass
-5. **Deploy** → Restart bot, verify production, close PRD
-6. **Never claim "done" without E2E green**
-
-### Key Files
-
-| File | What |
-|------|------|
-| [`TODO.md`](TODO.md) | **Start here** — all active/completed work with status |
-| `specs/SPEC.md` | Core spec — 27 numbered definitions |
-| `specs/TESTING.md` | Three-tier testing strategy |
-| `specs/prd-*.md` | Individual PRDs (features + bugfixes) |
 
 ---
 
@@ -114,30 +164,28 @@ digest-bot/
 |------|------|------|------------|
 | Unit | pytest | Individual functions, parsing, formatting | `pytest tests/test_recorder.py -v` |
 | Integration | pytest | Module interactions, mock Telegram handlers | `pytest tests/test_integration.py -v` |
-| E2E | `run_e2e.py` | Real Telegram UI via Peekaboo/AppleScript | `python3 tests/run_e2e.py` |
+| E2E | `run_e2e.py` | Real Telegram UI via AppleScript | `python3 tests/run_e2e.py` |
 
 ### Running Tests
 
 ```bash
-cd ~/digest-bot
-source venv/bin/activate
+cd ~/digest-bot && source venv/bin/activate
 
-# Unit + integration (run each file individually — bulk run has known pytest-asyncio hang)
+# Unit + integration (run each file individually)
 for f in tests/test_*.py; do
     [[ "$f" == *live_e2e* || "$f" == *test_e2e* ]] && continue
     python -m pytest "$f" -q
 done
 
-# E2E (standalone runner — Telegram Desktop must be open, bot must be running)
+# E2E (Telegram Desktop must be open, bot must be running)
 python3 tests/run_e2e.py              # All suites
 python3 tests/run_e2e.py --test basic # Basic commands only
-python3 tests/run_e2e.py -v           # Verbose output
+python3 tests/run_e2e.py -v           # Verbose
 ```
 
 ### Known Issue
 
-`pytest` hangs when running 3+ tests involving `subprocess.run(osascript)` or async handlers in bulk.
-Workaround: run test files individually, use `run_e2e.py` for live tests.
+`pytest` hangs when running 3+ async tests in bulk. Run test files individually.
 
 ---
 
@@ -161,3 +209,44 @@ Workaround: run test files individually, use `run_e2e.py` for live tests.
 
 - **Remote:** `github-digest:boyangwang/digest.git`
 - **Branch:** `main`
+
+---
+
+## PRD Template
+
+```markdown
+# PRD: <Title>
+
+> **Status:** 🔴 Draft — <current state>
+> **Project:** Sleep Digest Bot — <area>
+> **Date:** YYYY-MM-DD
+> **Priority:** P0 Critical | P1 High | P2 Medium | P3 Low
+> **Estimated effort:** Small (1-2hr) | Medium (2-4hr) | Large (4-8hr)
+> **Origin:** <who reported, context>
+> **Tasks:** 0/N complete
+
+---
+
+## Problem Statement
+<What's broken. Be specific. Include evidence.>
+
+## Root Cause Analysis
+<Why it's broken. Reference code files + line numbers.>
+
+## Tasks
+- [ ] **T1** — <description>
+- [ ] **T2** — <description>
+
+## Acceptance Criteria
+1. <testable condition>
+
+## Files to Modify
+| File | Changes |
+|------|---------|
+
+## Verification Results
+_Filled at Step 3_
+- Unit/integration: ___ passed
+- E2E: ___/___ passed
+- Date: ___
+```
