@@ -27,14 +27,14 @@
 
 ## Completed
 
-| # | PRD | Completed | Summary |
-|---|-----|-----------|---------|
-| 1 | [`prd-nightly-reflection.md`](specs/prd-nightly-reflection.md) | 2026-03-02 | Nightly reflection — Opus knowledge extraction on /sleep |
-| 2 | [`bugfix-recollect-and-orphans.md`](specs/bugfix-recollect-and-orphans.md) | 2026-03-01 | Recollect bug + orphan message cleanup |
-| 3 | [`BATTLEPLAN-user-filter.md`](specs/BATTLEPLAN-user-filter.md) | 2026-02 | User filtering, test mode, UI automation |
-| 4 | Token revocation | 2026-02 | Old token revoked, new token deployed |
-| 5 | Voice message feature | 2026-03-01 | SPEC-VOICE implemented, 220+ tests passing |
-| 6 | Nightly check-in cron | 2026-02 | Cron `22de298f` disabled |
+| ID | PRD | Completed | Summary |
+|------|-----|-----------|---------|
+| SDB-006 | [`prd-nightly-reflection.md`](specs/prd-nightly-reflection.md) | 2026-03-02 | Nightly reflection — Opus knowledge extraction on /sleep |
+| SDB-005 | [`bugfix-recollect-and-orphans.md`](specs/bugfix-recollect-and-orphans.md) | 2026-03-01 | Recollect bug + orphan message cleanup |
+| SDB-004 | Voice message feature | 2026-03-01 | SPEC-VOICE implemented, 220+ tests passing |
+| SDB-003 | [`BATTLEPLAN-user-filter.md`](specs/BATTLEPLAN-user-filter.md) | 2026-02 | User filtering, test mode, UI automation |
+| SDB-002 | Token revocation | 2026-02 | Old token revoked, new token deployed |
+| SDB-001 | Nightly check-in cron | 2026-02 | Cron `22de298f` disabled |
 
 ---
 

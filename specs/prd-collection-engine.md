@@ -1,4 +1,4 @@
-# PRD: Collection Engine — Parallel, Retriable, Supersedable
+# SDB-009: Collection Engine — Parallel, Retriable, Supersedable
 
 > **Status:** 🔴 Draft
 > **Priority:** P1

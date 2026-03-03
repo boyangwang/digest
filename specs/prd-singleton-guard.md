@@ -1,4 +1,4 @@
-# PRD: Singleton Guard — Prevent Duplicate Bot Instances
+# SDB-008: Singleton Guard — Prevent Duplicate Bot Instances
 
 > **Status:** 🔴 Draft — awaiting approval
 > **Project:** Sleep Digest Bot — Infrastructure Hardening
