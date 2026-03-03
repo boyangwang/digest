@@ -17,13 +17,17 @@ them to an Obsidian vault for archival.
 
 ### Step 0: Intake
 
-Bug reported or feature requested → create PRD.
+Bug reported or feature requested → **check existing work first, then create PRD.**
 
-1. Create `specs/prd-<descriptive-name>.md` using [PRD template](#prd-template) below
-2. Set status badge: `🔴 Draft`
-3. Add entry to [`TODO.md`](TODO.md) Active Work table
-4. Commit: `spec: PRD for <name>`
-5. **STOP.** Do not write code or tests yet. Wait for approval or proceed only if PRD was written collaboratively with Boyang.
+1. **READ `TODO.md` first** — check Active Work and Backlog for duplicates. If someone is already working on this, coordinate instead of creating a new PRD.
+2. **Check `specs/` directory** — `ls specs/prd-*.md` to see all existing PRDs. Search by keyword.
+3. **If no duplicate exists:** Create `specs/prd-<descriptive-name>.md` using [PRD template](#prd-template) below
+4. Set status badge: `🔴 Draft`
+5. Add entry to [`TODO.md`](TODO.md) Active Work table
+6. Commit: `spec: PRD for <name>`
+7. **STOP.** Do not write code or tests yet. Wait for approval or proceed only if PRD was written collaboratively with Boyang.
+
+**⚠️ Why steps 1-2 matter:** Multiple agents/sessions may work on this repo simultaneously. Creating duplicate PRDs wastes effort and creates confusion. Always check first.
 
 ### Step 1: TDD — Write Failing Tests
 

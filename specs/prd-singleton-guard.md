@@ -7,6 +7,7 @@
 > **Estimated effort:** Medium (2-4hr)
 > **Origin:** Bug investigation — 12 orphan files + hard-kill crash on 2026-03-02. Root cause: multiple bot instances running simultaneously.
 > **Tasks:** 0/9 complete
+> **Lock mechanism:** `fcntl.flock` (auto-releases on SIGKILL) + PID file (debuggability)
 
 ---
 
@@ -87,55 +88,47 @@ A file-based PID lock at `/tmp/digest-bot.pid` that prevents concurrent instance
 
 **On startup (`main.py`, before any Telegram operations):**
 ```python
-def acquire_pid_lock(pidfile="/tmp/digest-bot.pid"):
-    """Acquire exclusive PID lock. Exit if another instance is running."""
+import fcntl
+
+PID_FILE = "/tmp/digest-bot.pid"
+_lock_fd = None  # Module-level — must stay open for process lifetime
+
+def acquire_pid_lock(pidfile=PID_FILE):
+    """Acquire exclusive PID lock via fcntl.flock. Exit if another instance is running.
     
-    # Check for existing PID file
-    if os.path.exists(pidfile):
+    Uses flock (not PID-based check) because:
+    - Auto-releases on ANY process death, including SIGKILL — OS closes the fd
+    - No stale PID file problem — lock is held by fd, not by file content
+    - No race condition between checking PID and starting
+    - The PID is still written for informational/debugging purposes
+    """
+    global _lock_fd
+    _lock_fd = open(pidfile, "w")
+    try:
+        fcntl.flock(_lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        # Another instance holds the lock
+        # Read its PID for the error message
         try:
             with open(pidfile) as f:
-                old_pid = int(f.read().strip())
-            # Check if that PID is still alive
-            os.kill(old_pid, 0)  # signal 0 = existence check
-            # Process exists — refuse to start
-            logger.fatal("Another instance running (PID %d). Exiting." % old_pid)
-            sys.exit(1)
-        except (ProcessLookupError, ValueError):
-            # Process is dead — stale PID file, safe to proceed
-            logger.warning("Stale PID file found (PID %s). Cleaning up." % old_pid)
-            os.remove(pidfile)
-        except PermissionError:
-            # Process exists but we can't signal it
-            logger.fatal("Another instance running (PID in %s, permission denied). Exiting." % pidfile)
-            sys.exit(1)
+                old_pid = f.read().strip()
+        except Exception:
+            old_pid = "unknown"
+        logger.fatal("Another instance running (PID %s). Exiting." % old_pid)
+        sys.exit(1)
     
-    # Write our PID
-    with open(pidfile, "w") as f:
-        f.write(str(os.getpid()))
-    
-    # Register cleanup
-    import atexit
-    atexit.register(lambda: _remove_pidfile(pidfile))
+    # Lock acquired — write our PID for informational purposes
+    _lock_fd.write(str(os.getpid()))
+    _lock_fd.flush()
+    logger.info("PID lock acquired: %s (PID %d)" % (pidfile, os.getpid()))
 ```
 
-**On shutdown (atexit + signal handlers):**
-```python
-def _remove_pidfile(pidfile="/tmp/digest-bot.pid"):
-    """Remove PID file on clean shutdown."""
-    try:
-        with open(pidfile) as f:
-            stored_pid = int(f.read().strip())
-        if stored_pid == os.getpid():
-            os.remove(pidfile)
-    except Exception:
-        pass
-```
-
-**Why PID file over flock:**
-- PID file is visible to external tools (`cat /tmp/digest-bot.pid`, `pgrep`)
-- PID file survives inspection — flock is invisible and harder to debug
-- PID file allows stale detection via `os.kill(pid, 0)`
-- flock auto-releases on process death, which is nice, but PID stale detection handles this too
+**Why `fcntl.flock` over PID-based check:**
+- Auto-releases on ANY process death (SIGKILL, crash, OOM) — OS closes the fd → lock released
+- No stale PID file problem — the lock is authoritative, not the file content
+- No race condition between "check if PID alive" and "write our PID"
+- PID is still written to the file for debugging (`cat /tmp/digest-bot.pid`)
+- `LOCK_NB` (non-blocking) — instant failure if locked, no waiting
 
 ### 2. SIGTERM Handler (Graceful Shutdown on External Kill)
 
@@ -210,22 +203,21 @@ macOS default is already 10s, but making it explicit documents the intent. If th
 
 ### Phase 1: TDD — Write Failing Tests
 
-- [ ] **T1** — Write unit tests for PID lock (`tests/test_singleton.py`):
-  - `test_acquire_creates_pidfile` — after acquire, `/tmp/digest-bot.pid` exists with correct PID
-  - `test_acquire_rejects_if_running` — if PID file exists with a LIVE pid, `acquire_pid_lock()` calls `sys.exit(1)`
-  - `test_acquire_cleans_stale` — if PID file exists with a DEAD pid, `acquire_pid_lock()` removes it and proceeds
-  - `test_release_removes_pidfile` — `_remove_pidfile()` deletes the file if PID matches
-  - `test_release_ignores_other_pid` — `_remove_pidfile()` does NOT delete if PID doesn't match (safety: another instance started after us)
-  - `test_atexit_registered` — after `acquire_pid_lock()`, atexit has our cleanup registered
-  - Use `tmp_path` fixture + mock `/tmp/digest-bot.pid` to test in isolation
+- [ ] **T1** — Write unit tests for flock-based PID lock (`tests/test_singleton.py`):
+  - `test_acquire_creates_pidfile` — after acquire, PID file exists with correct PID
+  - `test_acquire_rejects_if_locked` — if another fd holds the flock, `acquire_pid_lock()` calls `sys.exit(1)`
+  - `test_lock_released_on_fd_close` — closing the fd releases the lock (simulates process death including SIGKILL)
+  - `test_pidfile_contains_pid` — PID file contains the current process PID (informational)
+  - `test_second_acquire_after_release` — after first fd closes, new acquire succeeds
+  - Use `tmp_path` fixture for isolated PID file paths
 
 - [ ] **T2** — Write unit test for SIGTERM handler:
   - `test_sigterm_handler_cleans_pidfile` — calling `_handle_sigterm()` removes PID file
   - `test_sigterm_handler_logs` — SIGTERM handler logs "Received SIGTERM"
 
-- [ ] **T3** — Write integration test for startup sequence:
-  - `test_main_acquires_lock_before_polling` — verify `acquire_pid_lock()` is called before `app.run_polling()`
-  - `test_duplicate_startup_exits` — simulate: write PID file with current PID → call `acquire_pid_lock()` → verify `sys.exit(1)`
+- [ ] **T3** — Write integration test for concurrent processes:
+  - `test_second_process_exits_immediately` — fork/spawn a subprocess that tries `acquire_pid_lock()` while parent holds it → verify child exits with rc=1
+  - `test_lock_survives_sigterm` — parent holds lock, receives SIGTERM, handler runs, lock released for next process
 
 - [ ] **T4** — Verify all new tests FAIL (no implementation yet) + existing tests still PASS
 
@@ -285,7 +277,6 @@ macOS default is already 10s, but making it explicit documents the intent. If th
 
 ## Non-Goals
 
-- NOT implementing flock (PID file is more debuggable)
 - NOT adding systemd-style socket activation (overkill for a single-user bot)
 - NOT retroactively cleaning existing orphan files (manual cleanup, separate task)
 - NOT fixing Bug A (handle_text crash resilience) — that's a separate PRD
@@ -304,7 +295,7 @@ macOS default is already 10s, but making it explicit documents the intent. If th
 
 | Question | Decision | Rationale |
 |----------|----------|-----------|
-| PID file vs flock | PID file | Visible, debuggable, supports stale detection via `os.kill(pid, 0)` |
+| Lock mechanism | `fcntl.flock` + PID file | flock auto-releases on any death (SIGKILL included); PID written for debuggability; best of both approaches |
 | PID file location | `/tmp/digest-bot.pid` | Standard location, survives reboots (macOS /tmp is actually /private/tmp, persistent) |
 | SIGTERM handling | Yes | launchctl sends SIGTERM before SIGKILL — catch it for cleanup |
 | ThrottleInterval | 10s (explicit) | macOS default, but explicit is better than implicit |
