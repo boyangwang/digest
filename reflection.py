@@ -110,23 +110,11 @@ workspace files to avoid duplicates (use memory_search or read the target files)
 - Write all extracted items to the workspace files directly.
 - Do NOT modify RULES.md directly. Propose any rule changes in the JSON output.
 - Run: git add -A && git commit -m "nightly-reflection: %s" && git push origin main
-- Then return a JSON summary (and ONLY JSON, no other text) in this format:
-
-```json
-{
-  "facts": [{"category": "...", "text": "..."}],
-  "feedback_lessons": [{"category": "...", "text": "...", "context": "...", "action": "..."}],
-  "rules_incidents": [{"text": "...", "severity": "...", "prevention": "..."}],
-  "compliments": [{"text": "...", "context": "..."}],
-  "decisions": [{"decision": "...", "rationale": "...", "alternatives": "...", "reversible": true}],
-  "action_items": [{"text": "..."}],
-  "ideas": [{"text": "...", "context": "..."}],
-  "technical_learnings": [{"text": "..."}],
-  "stats": {"messages_processed": N, "sessions_scanned": N, "items_extracted": N}
-}
-```
-
-Reply with ONLY the JSON. No preamble, no explanation, no markdown fences around the JSON.
+- Then reply with a human-readable markdown summary of what you extracted.
+  Start with "# 🪞 Nightly Reflection" heading.
+  List each category with item count and top items.
+  End with stats (messages processed, items extracted).
+  This summary will be appended directly to the digest file — make it clean and readable.
 """ % (date_str, conversations_file, date_str, date_str, date_str, date_str)
 
 
@@ -680,13 +668,17 @@ def run_reflection(conversations_text: str, date_str: str) -> tuple[str | None, 
             ) % (reason_text, timestamp, msg_count)
             return (fallback, empty_diff, empty_parsed)
 
-        # Parse response
-        parsed = parse_reflection_response(response)
+        # Use agent's raw response as the reflection report.
+        # The agent already writes structured data to workspace files.
+        # No JSON parsing needed — just prepend the section header if missing.
+        if response.strip().startswith("# 🪞"):
+            report = response.strip()
+        else:
+            report = "# 🪞 Nightly Reflection\n\n" + response.strip()
 
-        # Format report
-        report = format_reflection_report(parsed)
-        logger.info("Reflection complete: %d items extracted" % (
-            parsed["stats"].get("items_extracted", 0)))
+        # Try to parse JSON for Telegram summary (best-effort, not required)
+        parsed = parse_reflection_response(response)
+        logger.info("Reflection complete: %d chars report" % len(report))
 
         # Capture workspace state AFTER agent ran
         post_hash = _git_head_hash()
