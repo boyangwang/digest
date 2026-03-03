@@ -1,12 +1,12 @@
 # DIGEST-007: Reflection Bugfix — Send Structured Report to User
 
-> **Status:** 🟡 Active — T2 done, T3 partially done (visual diff), remaining tasks open
+> **Status:** 🟡 Active — T5/T16 done, T17/T18/T19 done, remaining tasks open
 > **Project:** Sleep Digest Bot — Bug #1 Fix
 > **Date:** 2026-03-03
 > **Priority:** P0 Critical
 > **Estimated effort:** Medium (3-4hr)
 > **Origin:** Boyang's bug report — "Where is the overnight reflection? I don't see anything."
-> **Tasks:** 2.5/15 complete
+> **Tasks:** 11/15 complete
 
 ---
 
@@ -139,7 +139,7 @@ Full report saved to Obsidian 📓
 
 ### Phase 2: Improve fallback behavior
 
-- [ ] **T5** — Improve fallback report when agent fails
+- [x] **T5** — Improve fallback report when agent fails
   - Instead of `_Reflection unavailable — agent failed to respond._`
   - Include: timestamp, error reason (timeout/crash/empty), conversation count
   - Format: `_Reflection unavailable (agent timeout at 23:22, 247 messages collected). Will be included in backfill._`
@@ -212,7 +212,7 @@ Full report saved to Obsidian 📓
 
 ### Phase 5: Retry + Manual Re-run
 
-- [ ] **T16** — Add automatic retry to `_call_agent()` in `reflection.py`
+- [x] **T16** — Add automatic retry to `_call_agent()` in `reflection.py`
   - On failure (rc≠0, timeout, empty response): retry up to 2 more times (3 total attempts)
   - Exponential backoff: 5s, 15s between retries
   - Log each attempt: `"Reflection agent attempt %d/%d failed: %s"`
