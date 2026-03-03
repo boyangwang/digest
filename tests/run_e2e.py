@@ -27,6 +27,7 @@ from pathlib import Path
 
 SGT = timezone(timedelta(hours=8))
 LOG_PATH = Path("/tmp/digest-bot.log")
+STDOUT_LOG_PATH = Path("/tmp/digest-bot-stdout.log")
 TEST_DIGEST_DIR = Path(
     "/Users/claw/Documents/NotesVault/Artificial-Colloquia/Doudou-Digest/_test"
 )
@@ -140,19 +141,49 @@ def drop_log_marker():
     """Write a unique marker to the bot log for test isolation."""
     marker = f"=== TEST MARKER {datetime.now(SGT).isoformat()} ==="
     LOG_PATH.open("a").write(marker + "\n")
+    # Also write to stdout log (launchd redirects bot output there)
+    STDOUT_LOG_PATH.open("a").write(marker + "\n")
     return marker
 
 
 def get_log_since(marker):
-    """Get log text after the marker."""
-    if not LOG_PATH.exists():
-        return ""
-    content = LOG_PATH.read_text()
-    idx = content.rfind(marker)
-    return content[idx:] if idx != -1 else ""
+    """Get log text after the marker from BOTH log files."""
+    texts = []
+    for path in [LOG_PATH, STDOUT_LOG_PATH]:
+        if path.exists():
+            content = path.read_text()
+            idx = content.rfind(marker)
+            if idx != -1:
+                texts.append(content[idx:])
+    return "\n".join(texts)
 
 
-def get_test_files():
+def wait_for_log(marker, needle, timeout=15):
+    """Poll logs until needle appears after marker, or timeout.
+
+    Returns (True, log_text) if found, (False, log_text) if timed out.
+    This replaces fragile fixed-delay waits with event-driven checking.
+    """
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        log_text = get_log_since(marker)
+        if needle in log_text:
+            return True, log_text
+        time.sleep(0.5)
+    return False, get_log_since(marker)
+
+
+def get_test_files(wait_timeout=0):
+    """Get test digest files. Optionally wait up to wait_timeout seconds for at least one."""
+    deadline = time.time() + wait_timeout
+    while True:
+        if TEST_DIGEST_DIR.exists():
+            files = sorted(TEST_DIGEST_DIR.glob("test-*.md"))
+            if files:
+                return files
+        if time.time() >= deadline:
+            break
+        time.sleep(0.5)
     if not TEST_DIGEST_DIR.exists():
         return []
     return sorted(TEST_DIGEST_DIR.glob("test-*.md"))
@@ -186,25 +217,24 @@ def run_test(name, fn):
 
 def test_start_command():
     marker = drop_log_marker()
-    send_message("/start", wait_after=4)
-    log_text = get_log_since(marker)
-    assert "Test user 6805433372" in log_text, "Bot didn't recognize test user"
+    send_message("/start", wait_after=2)
+    found, log_text = wait_for_log(marker, "Test user 6805433372", timeout=10)
+    assert found, "Bot didn't recognize test user"
 
 
 def test_status_idle():
     marker = drop_log_marker()
-    send_message("/status", wait_after=4)
-    log_text = get_log_since(marker)
-    assert "Test user" in log_text, "Bot didn't log test user"
+    send_message("/status", wait_after=2)
+    found, log_text = wait_for_log(marker, "Test user", timeout=10)
+    assert found, "Bot didn't log test user"
 
 
 def test_digest_creates_file():
     marker = drop_log_marker()
-    send_message("/digest", wait_after=5)
-    log_text = get_log_since(marker)
-    assert "Test user" in log_text, "Bot didn't log test user"
-    assert "Test /digest" in log_text, "Bot didn't process /digest"
-    files = get_test_files()
+    send_message("/digest", wait_after=2)
+    found, log_text = wait_for_log(marker, "Test /digest", timeout=10)
+    assert found, "Bot didn't process /digest"
+    files = get_test_files(wait_timeout=5)
     assert len(files) >= 1, f"Expected test file, got {len(files)}"
     content = files[0].read_text()
     assert 'status: "active"' in content, "Missing active status"
@@ -214,14 +244,16 @@ def test_digest_creates_file():
 
 def test_text_appends_recap():
     # Need active digest first
-    send_message("/digest", wait_after=5)
-    files = get_test_files()
+    marker = drop_log_marker()
+    send_message("/digest", wait_after=2)
+    wait_for_log(marker, "Test /digest", timeout=10)
+    files = get_test_files(wait_timeout=5)
     assert len(files) >= 1, "No digest file to append to"
 
-    marker = drop_log_marker()
-    send_message("E2E test recap entry", wait_after=4)
-    log_text = get_log_since(marker)
-    assert "recorded" in log_text.lower(), "Bot didn't record the text"
+    marker2 = drop_log_marker()
+    send_message("E2E test recap entry", wait_after=2)
+    found, log_text = wait_for_log(marker2, "recorded", timeout=10)
+    assert found, "Bot didn't record the text"
 
     content = files[0].read_text()
     assert "E2E test recap entry" in content, "Recap text not in file"
@@ -229,81 +261,204 @@ def test_text_appends_recap():
 
 def test_sleep_finalizes():
     # Need active digest first
-    send_message("/digest", wait_after=5)
     marker = drop_log_marker()
-    send_message("/sleep", wait_after=6)
-    log_text = get_log_since(marker)
-    assert "Test /sleep" in log_text, "Bot didn't process /sleep"
+    send_message("/digest", wait_after=2)
+    wait_for_log(marker, "Test /digest", timeout=10)
+
+    marker2 = drop_log_marker()
+    send_message("/sleep", wait_after=2)
+    found, log_text = wait_for_log(marker2, "Test /sleep", timeout=10)
+    assert found, "Bot didn't process /sleep"
 
 
 def test_full_lifecycle():
     """Full cycle: /digest → text → /sleep."""
     marker = drop_log_marker()
-    send_message("/digest", wait_after=5)
+    send_message("/digest", wait_after=2)
+    found, _ = wait_for_log(marker, "Test /digest", timeout=10)
+    assert found, "/digest not processed"
 
-    log_text = get_log_since(marker)
-    assert "Test /digest" in log_text, "/digest not processed"
-
-    files = get_test_files()
+    files = get_test_files(wait_timeout=5)
     assert len(files) >= 1, "No digest file created"
 
-    send_message("Evening journal entry from E2E test", wait_after=4)
+    marker2 = drop_log_marker()
+    send_message("Evening journal entry from E2E test", wait_after=2)
+    wait_for_log(marker2, "recorded", timeout=10)
     content = files[0].read_text()
     assert "Evening journal entry" in content, "Journal entry not recorded"
 
-    marker2 = drop_log_marker()
-    send_message("/sleep", wait_after=6)
-    log_text2 = get_log_since(marker2)
-    assert "Test /sleep" in log_text2, "/sleep not processed"
+    marker3 = drop_log_marker()
+    send_message("/sleep", wait_after=2)
+    found, _ = wait_for_log(marker3, "Test /sleep", timeout=10)
+    assert found, "/sleep not processed"
 
 
 def test_sleep_includes_reflection():
-    """Full cycle with reflection: /digest → text → /sleep → verify reflection section."""
-    marker = drop_log_marker()
-    send_message("/digest", wait_after=5)
-    send_message("Today I worked on E2E tests", wait_after=4)
+    """E2E-R1: /digest → text → /sleep → reflection section in digest file.
 
-    files = get_test_files()
-    assert len(files) >= 1, "No digest file created"
+    Verifies the core reflection flow: after /sleep, the digest file
+    contains a 🪞 Nightly Reflection section with mock data (test mode).
+    """
+    marker = drop_log_marker()
+    send_message("/digest", wait_after=2)
+    wait_for_log(marker, "Test /digest", timeout=10)
 
     marker2 = drop_log_marker()
-    send_message("/sleep", wait_after=8)
+    send_message("Today I worked on E2E tests", wait_after=2)
+    wait_for_log(marker2, "recorded", timeout=10)
 
-    log_text = get_log_since(marker2)
-    assert "Test /sleep" in log_text, "/sleep not processed"
+    files = get_test_files(wait_timeout=5)
+    assert len(files) >= 1, "No digest file created"
 
-    # Verify reflection was appended
+    marker3 = drop_log_marker()
+    send_message("/sleep", wait_after=2)
+    found, log_text = wait_for_log(marker3, "Test /sleep", timeout=10)
+    assert found, "/sleep not processed"
+
+    # Wait for reflection + finalize to complete
+    wait_for_log(marker3, "Test reflection appended", timeout=10)
+
+    # Verify reflection was appended to the file
     content = files[0].read_text()
     assert "Nightly Reflection" in content, "Reflection section missing from digest"
 
+    # Verify YAML frontmatter has reflection fields
+    assert "reflection_at:" in content, "reflection_at missing from YAML"
+    assert "reflection_model:" in content, "reflection_model missing from YAML"
 
-def test_sleep_reflection_logs_diff_capture():
-    """Verify /sleep logs diff capture activity (test mode uses mock reflection).
+    # Verify file structure: Summary → Recap → Reflection (correct order)
+    assert content.index("Doudou's Summary") < content.index("Boyang's Recap"), \
+        "Summary must come before Recap"
+    assert content.index("Boyang's Recap") < content.index("Nightly Reflection"), \
+        "Recap must come before Reflection"
 
-    In test mode, no real agent runs and no real workspace changes happen,
-    so we verify the LOG output shows the diff capture pipeline was reached.
-    This validates the code path exists; real diff rendering is tested in
-    integration tests (IT11-IT19) with mocked subprocess.
+
+def test_sleep_sends_reflection_summary():
+    """E2E-R2: /sleep sends structured reflection summary message to chat.
+
+    After /sleep with an active digest, bot must send a Telegram message
+    containing reflection content — category counts and extraction stats.
+    NOT just a generic "finalized ✅" message.
+
+    This tests T1 (format_reflection_telegram) + T3 (send to user) + T4 (test mode).
+
+    EXPECTED TO FAIL until T1/T3/T4 are implemented.
     """
     marker = drop_log_marker()
-    send_message("/digest", wait_after=5)
-    send_message("Testing diff capture pipeline", wait_after=4)
+    send_message("/digest", wait_after=2)
+    wait_for_log(marker, "Test /digest", timeout=10)
 
     marker2 = drop_log_marker()
-    send_message("/sleep", wait_after=8)
+    send_message("Reflection summary E2E test", wait_after=2)
+    wait_for_log(marker2, "recorded", timeout=10)
 
-    log_text = get_log_since(marker2)
-    assert "Test /sleep" in log_text, "/sleep not processed"
-    # Test mode uses mock reflection, so we just verify finalize worked
-    assert "Test digest finalized" in log_text, "Finalize didn't complete"
+    marker3 = drop_log_marker()
+    send_message("/sleep", wait_after=2)
+    found, log_text = wait_for_log(marker3, "Test /sleep", timeout=10)
+    assert found, "/sleep not processed"
+
+    # Wait for full processing
+    wait_for_log(marker3, "Test reflection appended", timeout=10)
+
+    # Bot must log that it sent a reflection summary (test mode should log this).
+    # Look for evidence of structured reflection content being sent.
+    found_summary, log_text = wait_for_log(marker3, "reflection summary sent", timeout=5)
+    assert found_summary, \
+        "No reflection summary message sent to user (expected 'reflection summary sent' in logs)"
+
+
+def test_sleep_finalizes_with_reflection():
+    """E2E-R3: /sleep finalizes digest AND includes reflection.
+
+    Verifies both operations complete: reflection appended + file finalized.
+    Also verifies SPEC-REFLECT-05: finalize always runs.
+    """
+    marker = drop_log_marker()
+    send_message("/digest", wait_after=2)
+    wait_for_log(marker, "Test /digest", timeout=10)
+
+    marker2 = drop_log_marker()
+    send_message("Testing finalize with reflection", wait_after=2)
+    wait_for_log(marker2, "recorded", timeout=10)
+
+    files = get_test_files(wait_timeout=5)
+    assert len(files) >= 1, "No digest file created"
+
+    marker3 = drop_log_marker()
+    send_message("/sleep", wait_after=2)
+
+    # Wait for /sleep processing + reflection + finalize
+    found, log_text = wait_for_log(marker3, "Test /sleep", timeout=10)
+    assert found, "/sleep not processed"
+    wait_for_log(marker3, "Test reflection appended", timeout=10)
+
+    # Verify file has both reflection AND is finalized
+    content = files[0].read_text()
+    assert "Nightly Reflection" in content, "Reflection section missing"
+    assert "final" in content, "Digest not finalized (missing 'final' in content)"
+    assert "finalized_at:" in content, "finalized_at timestamp missing from YAML"
+
+
+def test_sleep_reflection_idempotent():
+    """E2E-R4: Running /sleep twice doesn't duplicate reflection section.
+
+    /digest → text → /sleep creates reflection.
+    Second /sleep has no active digest — reflection should NOT duplicate.
+    """
+    marker = drop_log_marker()
+    send_message("/digest", wait_after=2)
+    wait_for_log(marker, "Test /digest", timeout=10)
+
+    marker2 = drop_log_marker()
+    send_message("Testing idempotent reflection", wait_after=2)
+    wait_for_log(marker2, "recorded", timeout=10)
+
+    files = get_test_files(wait_timeout=5)
+    assert len(files) >= 1, "No digest file created"
+
+    marker3 = drop_log_marker()
+    send_message("/sleep", wait_after=2)
+    wait_for_log(marker3, "Test reflection appended", timeout=10)
+
+    # Second /sleep — no active digest
+    marker4 = drop_log_marker()
+    send_message("/sleep", wait_after=2)
+    wait_for_log(marker4, "has_active=False", timeout=10)
+
+    content = files[0].read_text()
+    count = content.count("Nightly Reflection")
+    assert count == 1, f"Reflection section duplicated: found {count} times"
+
+
+def test_sleep_without_text_still_reflects():
+    """E2E-R5: /digest → /sleep (no text) still runs reflection.
+
+    Even without Boyang's recap text, /sleep should still append a
+    reflection section (empty/mock in test mode).
+    """
+    marker = drop_log_marker()
+    send_message("/digest", wait_after=2)
+    wait_for_log(marker, "Test /digest", timeout=10)
+
+    files = get_test_files(wait_timeout=5)
+    assert len(files) >= 1, "No digest file created"
+
+    marker2 = drop_log_marker()
+    send_message("/sleep", wait_after=2)
+    found, log_text = wait_for_log(marker2, "Test /sleep", timeout=10)
+    assert found, "/sleep not processed"
+    wait_for_log(marker2, "Test reflection appended", timeout=10)
+
+    content = files[0].read_text()
+    assert "Nightly Reflection" in content, "Reflection missing even without recap text"
 
 
 def test_sleep_without_digest():
     """Sleep without active digest — should not crash."""
     marker = drop_log_marker()
-    send_message("/sleep", wait_after=5)
-    log_text = get_log_since(marker)
-    assert "Test /sleep" in log_text, "/sleep not processed"
+    send_message("/sleep", wait_after=2)
+    found, log_text = wait_for_log(marker, "Test /sleep", timeout=10)
+    assert found, "/sleep not processed"
     assert "has_active=False" in log_text, "Should report no active digest"
 
 
@@ -325,7 +480,10 @@ SUITES = {
     ],
     "reflection": [
         ("test_sleep_includes_reflection", test_sleep_includes_reflection),
-        ("test_sleep_reflection_logs_diff_capture", test_sleep_reflection_logs_diff_capture),
+        ("test_sleep_sends_reflection_summary", test_sleep_sends_reflection_summary),
+        ("test_sleep_finalizes_with_reflection", test_sleep_finalizes_with_reflection),
+        ("test_sleep_reflection_idempotent", test_sleep_reflection_idempotent),
+        ("test_sleep_without_text_still_reflects", test_sleep_without_text_still_reflects),
     ],
 }
 
