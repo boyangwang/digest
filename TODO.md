@@ -10,7 +10,7 @@
 
 | # | PRD | Status | Summary | Tasks | Next Step |
 |---|-----|--------|---------|-------|-----------|
-| 1 | [`prd-reflection-bugfix.md`](specs/prd-reflection-bugfix.md) | 🔴 Draft | Reflection not sent to user + retry + `/reflect` command | 0/12 | Write failing tests (T1-T4) |
+| 1 | [`prd-reflection-bugfix.md`](specs/prd-reflection-bugfix.md) | 🟡 Active | Reflection report to user + visual diffs + retry + `/reflect` | 5.5/19 | T1: `format_reflection_telegram()` + T3: text summary |
 | 2 | [`prd-singleton-guard.md`](specs/prd-singleton-guard.md) | 🔴 Draft | PID lock to prevent duplicate bot instances (root cause of orphan files + 409 conflicts) | 0/10 | Awaiting Boyang approval |
 | 3 | [`prd-collection-engine.md`](specs/prd-collection-engine.md) | 🔴 Draft | Parallel + retriable + supersedable collection with generation counter | 0/14 | Awaiting Boyang approval |
 
@@ -60,4 +60,4 @@
 
 ---
 
-*Last updated: 2026-03-03*
+*Last updated: 2026-03-03 13:50 SGT*

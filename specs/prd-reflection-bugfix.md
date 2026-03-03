@@ -1,12 +1,12 @@
 # PRD: Reflection Bugfix — Send Structured Report to User
 
-> **Status:** 🔴 Draft — PRD written, awaiting test cases + implementation
+> **Status:** 🟡 Active — T2 done, T3 partially done (visual diff), remaining tasks open
 > **Project:** Sleep Digest Bot — Bug #1 Fix
 > **Date:** 2026-03-03
 > **Priority:** P0 Critical
 > **Estimated effort:** Medium (3-4hr)
 > **Origin:** Boyang's bug report — "Where is the overnight reflection? I don't see anything."
-> **Tasks:** 0/12 complete
+> **Tasks:** 2.5/15 complete
 
 ---
 
@@ -24,6 +24,7 @@ Additionally, the first production run (2026-03-02 23:22) failed because the bot
 - **Status:** FIXED in current `reflection.py` — no `--model` flag
 - **What happened:** Bot was running old code when Boyang used `/sleep`. Bot was restarted at 23:24 with fix.
 - **Verification needed:** E2E test must confirm agent call works without `--model`
+- **Also fixed (2026-03-03):** Timeout increased 300s → 1800s (30 min). RULES.md auto-apply removed from prompt.
 
 ### Issue 1b: No Reflection Message Sent to User
 - **Status:** NOT FIXED — `cmd_sleep` in `main.py` only:
@@ -119,17 +120,17 @@ Full report saved to Obsidian 📓
   - Max length: 4096 chars (Telegram limit)
   - Truncate gracefully if too long
 
-- [ ] **T2** — Modify `run_reflection()` return value to include both report AND parsed data
-  - Currently returns: `str | None` (markdown report)
-  - Change to: `tuple[str, dict] | None` — `(report_markdown, parsed_dict)`
-  - This allows `cmd_sleep` to use parsed dict for Telegram message while using report for file
-  - Update all callers
+- [x] **T2** — Modify `run_reflection()` return value to include both report AND diff data ✅ `3b7fa27`
+  - Returns: `tuple[str | None, dict]` — `(report_markdown, diff_info)`
+  - `diff_info` contains: `stat`, `patch`, `files` (per-file before/after), `images` (PNG paths)
+  - Captures git HEAD before/after agent runs for workspace change tracking
+  - All callers + tests updated (22/22 pass)
 
-- [ ] **T3** — Modify `cmd_sleep` in `main.py` to send reflection content
-  - After `run_reflection()` succeeds: call `format_reflection_telegram(parsed, date_str)`
-  - Send result via `update.message.reply_text(telegram_msg, parse_mode="Markdown")`
-  - On failure: send "⚠️ Reflection failed" with brief error reason
-  - Ensure message is sent BEFORE `finalize()` (user sees content while file is being saved)
+- [ ] **T3** — Modify `cmd_sleep` in `main.py` to send reflection content *(partially done)*
+  - [x] Visual diff images sent via `send_photo` after finalize ✅ `3b7fa27`
+  - [x] Fallback: `git diff --stat` as text if image rendering fails ✅
+  - [ ] Still needed: structured text summary message (category counts + top items)
+  - [ ] Still needed: `format_reflection_telegram(parsed, date_str)` function
 
 - [ ] **T4** — Update test mode in `cmd_sleep` to also send mock reflection message
   - `TestRecorder.append_reflection()` already exists
@@ -189,15 +190,35 @@ Full report saved to Obsidian 📓
 
 ---
 
-### Phase 4: Retry + Manual Re-run
+### Phase 4: Visual Diff Report (Proposal B) — ✅ DONE
 
-- [ ] **T9** — Add automatic retry to `_call_agent()` in `reflection.py`
+> Implemented `3b7fa27` — git diff capture + diffs tool PNG rendering + Telegram delivery.
+
+- [x] **T13** — Add `_git_head_hash()` and `_git_diff()` to `reflection.py`
+  - Captures HEAD before/after agent runs
+  - Extracts per-file before/after content via `git show <hash>:<path>`
+  - Returns structured dict: `{stat, patch, files: [{path, before, after}]}`
+
+- [x] **T14** — Add `render_diff_images()` to `reflection.py`
+  - Writes before/after to temp files for each changed workspace file
+  - Calls `openclaw agent --local` with diffs tool (mode=image) per file
+  - Returns list of PNG paths
+  - 120s timeout per file, graceful failure (returns empty list)
+
+- [x] **T15** — Integrate diff images into `cmd_sleep` flow
+  - After `finalize()`, sends "📊 Workspace changes from reflection:" header
+  - Sends each diff PNG via `context.bot.send_photo()`
+  - Fallback: sends `git diff --stat` as code block if no images rendered
+
+### Phase 5: Retry + Manual Re-run
+
+- [ ] **T16** — Add automatic retry to `_call_agent()` in `reflection.py`
   - On failure (rc≠0, timeout, empty response): retry up to 2 more times (3 total attempts)
   - Exponential backoff: 5s, 15s between retries
   - Log each attempt: `"Reflection agent attempt %d/%d failed: %s"`
   - Only return None after all retries exhausted
 
-- [ ] **T10** — Add `/reflect` command with preview → approve flow
+- [ ] **T17** — Add `/reflect` command with preview → approve flow
   - New handler in `main.py`: `cmd_reflect(update, context)`
   - **Preview → Approve pattern using inline keyboard button:**
     1. Find the most recent finalized digest file (status="final")
@@ -212,11 +233,11 @@ Full report saved to Obsidian 📓
   - **Callback handler:** `callback_reflect_accept(update, context)` — registered via `CallbackQueryHandler`
   - **Note:** For `/sleep`, the flow is different — reflection is auto-accepted (no button needed). `/reflect` is for manual re-runs where review is desired.
 
-- [ ] **T11** — Add `/reflect` to bot command menu and help text
+- [ ] **T18** — Add `/reflect` to bot command menu and help text
   - Update `cmd_start` help message
   - Register handler in `main.py` setup
 
-- [ ] **T12** — E2E test for `/reflect` re-run
+- [ ] **T19** — E2E test for `/reflect` re-run
   - In `tests/run_e2e.py`:
     1. `/digest` → text → `/sleep` (creates finalized file with reflection)
     2. `/reflect` → verify new reflection message sent
@@ -229,6 +250,7 @@ Full report saved to Obsidian 📓
 1. When Boyang sends `/sleep` with an active digest:
    - Bot sends "晚安 🌙 Running reflection..."
    - Bot sends structured reflection summary (category counts + top items)
+   - **Bot sends visual diff PNGs showing workspace changes** ✅ implemented
    - Bot sends "✅ Digest saved to Obsidian"
    - Digest file in Obsidian contains full reflection section
 2. When reflection agent fails:
@@ -238,24 +260,29 @@ Full report saved to Obsidian 📓
    - Fallback text in file includes error context
 3. When Boyang sends `/reflect`:
    - Re-runs reflection on most recent finalized digest (or specified date)
-   - Sends structured reflection message
+   - Sends structured reflection message + visual diffs
    - Updates file in-place (replaces old reflection section)
-4. Test mode (`@claw0606`):
+4. Visual diff report (Proposal B):
+   - ✅ Git diff captured before/after reflection agent commits
+   - ✅ Per-file visual diff rendered via OpenClaw diffs tool (PNG)
+   - ✅ Images sent to Boyang via Telegram `send_photo`
+   - ✅ Fallback: `git diff --stat` as code block
+5. Test mode (`@claw0606`):
    - `/sleep` sends mock reflection summary message
    - E2E test verifies message content
-5. No regressions: 277+ unit/integration + 8+ E2E pass
+6. No regressions: 277+ unit/integration + 8+ E2E pass
 
 ---
 
 ## Files to Modify
 
-| File | Changes |
-|------|---------|
-| `reflection.py` | Add `format_reflection_telegram()`, change `run_reflection()` return type, add retry to `_call_agent()` |
-| `main.py` | Modify `cmd_sleep` to send reflection content, add `cmd_reflect` handler, update test mode |
-| `recorder.py` | Add `replace_reflection(report, filepath)` for in-place update |
-| `tests/test_reflection.py` | Add tests for `format_reflection_telegram()`, retry logic, updated return type |
-| `tests/run_e2e.py` | Update `test_sleep_includes_reflection`, add `test_reflect_rerun` |
+| File | Changes | Status |
+|------|---------|--------|
+| `reflection.py` | ~~Change return type~~ ✅, ~~git diff capture~~ ✅, ~~render_diff_images~~ ✅, add `format_reflection_telegram()`, add retry | Partial |
+| `main.py` | ~~Send visual diffs~~ ✅, send structured text summary, add `cmd_reflect` handler, update test mode | Partial |
+| `recorder.py` | Add `replace_reflection(report, filepath)` for in-place update | TODO |
+| `tests/test_reflection.py` | ~~Updated return type~~ ✅, add tests for `format_reflection_telegram()`, retry logic, diff capture | Partial |
+| `tests/run_e2e.py` | Update `test_sleep_includes_reflection`, add `test_reflect_rerun` | TODO |
 
 ---
 
