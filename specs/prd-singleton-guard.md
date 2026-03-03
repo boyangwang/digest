@@ -6,7 +6,7 @@
 > **Priority:** P1 High
 > **Estimated effort:** Medium (2-4hr)
 > **Origin:** Bug investigation — 12 orphan files + hard-kill crash on 2026-03-02. Root cause: multiple bot instances running simultaneously.
-> **Tasks:** 0/9 complete
+> **Tasks:** 0/10 complete
 > **Lock mechanism:** `fcntl.flock` (auto-releases on SIGKILL) + PID file (debuggability)
 
 ---
@@ -249,6 +249,16 @@ macOS default is already 10s, but making it explicit documents the intent. If th
   - Verify: no orphan digest files created
   - Verify: no 409 Conflict errors
 
+### Phase 4: Cleanup Legacy Orphans
+
+- [ ] **T10** — Delete all empty orphan digest files from 2026-03-02
+  - Identify files: `status: active`, size ≤ 400 bytes, no real summary content
+  - Delete them from Obsidian vault (they pollute Boyang's notes)
+  - Keep files with real content (e.g., `2026-03-02-1216.md` at 47KB, `2026-03-02-1156.md` at 5.5KB)
+  - Keep finalized files (e.g., `2026-03-02-2314.md` with status: final)
+  - Log which files were deleted and why
+  - Commit cleanup to git
+
 ---
 
 ## Acceptance Criteria
@@ -278,7 +288,7 @@ macOS default is already 10s, but making it explicit documents the intent. If th
 ## Non-Goals
 
 - NOT adding systemd-style socket activation (overkill for a single-user bot)
-- NOT retroactively cleaning existing orphan files (manual cleanup, separate task)
+- ~~NOT retroactively cleaning existing orphan files~~ — now included as T10
 - NOT fixing Bug A (handle_text crash resilience) — that's a separate PRD
 
 ---
