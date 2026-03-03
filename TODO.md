@@ -11,6 +11,7 @@
 | ID | PRD | Status | Summary | Tasks | Next Step |
 |------|-----|--------|---------|-------|-----------|
 | DIGEST-009 | [`prd-collection-engine.md`](specs/prd-collection-engine.md) | 🟢 Done | Parallel + retriable + supersedable collection with generation counter | 12/14 | T13-T14 docs cleanup |
+| DIGEST-010 | [`prd-derived-sessions.md`](specs/prd-derived-sessions.md) | 🟡 Active | Derived session architecture — proper test coverage | 0/10 | Tests written, spawning agent |
 
 ---
 

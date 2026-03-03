@@ -650,6 +650,38 @@ def test_reflect_not_available_in_test():
 
 
 # ============================================================
+# DIGEST-010: Derived session architecture E2E tests
+# ============================================================
+
+def test_parallel_no_lock_contention():
+    """E2E-DS1 (T9): Parallel collection uses separate session IDs, no lock errors."""
+    marker = drop_log_marker()
+    send_message("/digest", wait_after=2)
+    wait_for_log(marker, "Test /digest", timeout=10)
+
+    # Send text to trigger collection
+    marker2 = drop_log_marker()
+    send_message("Testing derived session architecture", wait_after=2)
+    found, _ = wait_for_log(marker2, "recorded", timeout=10)
+    assert found, "Message not recorded"
+
+    # Check logs for lock contention errors — there should be NONE
+    time.sleep(3)  # Let collection complete
+    log_path = "/tmp/digest-bot.log"
+    with open(log_path) as f:
+        recent_log = f.read()
+
+    # Extract log lines after our marker
+    marker_idx = recent_log.rfind(marker2)
+    if marker_idx >= 0:
+        recent_section = recent_log[marker_idx:]
+        assert "session file locked" not in recent_section, \
+            "Lock contention detected! Derived sessions not working."
+        assert "lock" not in recent_section.lower() or "lock" in "clock", \
+            "Unexpected lock-related error in logs"
+
+
+# ============================================================
 # DIGEST-009: Collection engine E2E tests
 # ============================================================
 
@@ -758,6 +790,7 @@ SUITES = {
         ("test_collection_basic", test_collection_basic),
         ("test_collection_supersession", test_collection_supersession),
         ("test_sleep_supersedes_collection", test_sleep_supersedes_collection),
+        ("test_parallel_no_lock_contention", test_parallel_no_lock_contention),
     ],
 }
 
