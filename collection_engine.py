@@ -15,8 +15,10 @@ import os
 import re
 import signal
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from typing import Optional
+
+SGT = timezone(timedelta(hours=8))
 
 from collector import collect_all_messages as _collect_all, format_messages, group_by_session as _group_by_session
 from llm import async_compose_summary
@@ -124,7 +126,7 @@ class CollectionEngine:
 
         if total == 0:
             logger.info("Gen %d: 0 messages" % gen)
-            return CollectionResult(summaries=[], total=0, coverage_to=datetime.now())
+            return CollectionResult(summaries=[], total=0, coverage_to=datetime.now(SGT))
 
         logger.info("Gen %d: %d messages across %d sessions" % (gen, total, len(session_groups)))
 
@@ -170,7 +172,7 @@ class CollectionEngine:
         return CollectionResult(
             summaries=succeeded,
             total=total,
-            coverage_to=datetime.now()
+            coverage_to=datetime.now(SGT)
         )
 
     async def _abort_active(self):
