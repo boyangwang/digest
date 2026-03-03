@@ -1,5 +1,6 @@
 # PRD: Nightly Reflection — Automated Knowledge Extraction
 
+> **Status:** 🟢 Done — Completed 2026-03-02. Bugfixes tracked in `prd-reflection-bugfix.md`
 > **Project:** Sleep Digest Bot — Nightly Reflection Feature
 > **Date:** 2026-03-02
 > **Priority:** P1 High

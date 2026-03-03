@@ -82,16 +82,7 @@ digest-bot/
 
 ## Specs & PRDs
 
-**All specifications live in `specs/`.** This is the single source of truth for what to build and what to fix.
-
-### Naming Convention
-
-| Type | Pattern | Example |
-|------|---------|---------|
-| Feature PRD | `prd-<feature>.md` | `prd-nightly-reflection.md` |
-| Bugfix PRD | `prd-<area>-bugfix.md` | `prd-reflection-bugfix.md` |
-| Core spec | `SPEC.md` | Numbered definitions (SPEC-01..27) |
-| Testing | `TESTING.md` | Three-tier testing strategy |
+**All specifications live in `specs/`.** Start with **[`specs/INDEX.md`](specs/INDEX.md)** — it tracks every PRD's status and tells you what to work on next.
 
 ### Workflow
 
@@ -99,14 +90,17 @@ digest-bot/
 2. **PRD approved** → Write failing tests (TDD)
 3. **Implement** → Check off tasks in PRD as completed
 4. **E2E verify** → All tests pass via `run_e2e.py` + unit/integration via `pytest`
-5. **Never claim "done" without E2E green**
+5. **Update `specs/INDEX.md`** — move PRD to Done
+6. **Never claim "done" without E2E green**
 
-### Active PRDs
+### Key Files
 
-| PRD | Status | Description |
-|-----|--------|-------------|
-| `prd-reflection-bugfix.md` | 🔴 Active | Bug #1: Reflection not sent to user, retry, /reflect command |
-| `prd-nightly-reflection.md` | ✅ Done | Original reflection feature (v2.1) |
+| File | What |
+|------|------|
+| `specs/INDEX.md` | **Start here** — all PRDs with status, progress, next steps |
+| `specs/SPEC.md` | Core spec — 27 numbered definitions |
+| `specs/TESTING.md` | Three-tier testing strategy |
+| `specs/prd-*.md` | Individual PRDs (features + bugfixes) |
 
 ---
 

@@ -1,10 +1,12 @@
 # PRD: Reflection Bugfix — Send Structured Report to User
 
+> **Status:** 🔴 Draft — PRD written, awaiting test cases + implementation
 > **Project:** Sleep Digest Bot — Bug #1 Fix
 > **Date:** 2026-03-03
 > **Priority:** P0 Critical
-> **Estimated effort:** Small-Medium (2-3hr)
+> **Estimated effort:** Medium (3-4hr)
 > **Origin:** Boyang's bug report — "Where is the overnight reflection? I don't see anything."
+> **Tasks:** 0/12 complete
 
 ---
 
