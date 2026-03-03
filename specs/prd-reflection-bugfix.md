@@ -195,17 +195,20 @@ Full report saved to Obsidian 📓
   - Log each attempt: `"Reflection agent attempt %d/%d failed: %s"`
   - Only return None after all retries exhausted
 
-- [ ] **T10** — Add `/reflect` command for manual re-run
+- [ ] **T10** — Add `/reflect` command with preview → approve flow
   - New handler in `main.py`: `cmd_reflect(update, context)`
-  - Behavior:
+  - **Preview → Approve pattern using inline keyboard button:**
     1. Find the most recent finalized digest file (status="final")
-    2. If it already has a real reflection (not fallback), ask for confirmation: "Reflection already exists. Re-run? Reply /reflect confirm"
-    3. Collect conversations using that file's `coverage_from` / `coverage_to`
-    4. Run `run_reflection()` with retry
-    5. Overwrite the reflection section in the file (replace, not append)
-    6. Send structured reflection message to user (same format as T1)
+    2. Collect conversations using that file's `coverage_from` / `coverage_to`
+    3. Run `run_reflection()` with retry
+    4. Send structured reflection message as **preview** (same format as T1)
+    5. Attach one inline button: **"✅ Accept & Save"** (`callback_data="reflect_accept:<filepath>"`)
+    6. If Boyang presses → `replace_reflection(report, filepath)` updates file in-place, reply "✅ Saved"
+    7. If Boyang doesn't press → nothing saved, reflection is just a preview
   - Optional argument: `/reflect 2026-03-02` to target a specific date
   - Boyang-only (same `_check_user` but production users only, not test)
+  - **Callback handler:** `callback_reflect_accept(update, context)` — registered via `CallbackQueryHandler`
+  - **Note:** For `/sleep`, the flow is different — reflection is auto-accepted (no button needed). `/reflect` is for manual re-runs where review is desired.
 
 - [ ] **T11** — Add `/reflect` to bot command menu and help text
   - Update `cmd_start` help message
