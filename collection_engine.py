@@ -12,6 +12,7 @@ DIGEST-009 implementation:
 import asyncio
 import logging
 import os
+import re
 import signal
 from dataclasses import dataclass
 from datetime import datetime
@@ -21,6 +22,40 @@ from collector import collect_all_messages as _collect_all, format_messages, gro
 from llm import async_compose_summary
 
 logger = logging.getLogger("digest-bot.collection-engine")
+
+
+def derive_session_id(source_name: str) -> str:
+    """Derive a safe session ID from a source session name.
+    
+    Each parallel summary call gets its own session ID based on the source
+    session name, enabling lock-free parallel execution.
+    
+    Sanitization rules:
+    - Convert to lowercase
+    - Replace non-alphanumeric characters with hyphens
+    - Strip leading/trailing hyphens
+    - Truncate to 40 characters max
+    - Prefix with "digest-summary-"
+    
+    Examples:
+        "CLAW 003" → "digest-summary-claw-003"
+        "Direct with Boyang" → "digest-summary-direct-with-boyang"
+        "agent:main:subagent:5c16b1cc-6bdf" → "digest-summary-agent-main-subagent-5c16b1cc-6bdf"
+    
+    Args:
+        source_name: Original session name (may contain spaces, special chars, unicode)
+    
+    Returns:
+        Sanitized session ID safe for filesystem use
+    """
+    # Sanitize: lowercase, replace non-alphanumeric with hyphens, strip edges
+    safe_name = re.sub(r'[^a-zA-Z0-9]+', '-', source_name.lower()).strip('-')[:40]
+    
+    # Handle edge case: empty string after sanitization
+    if not safe_name:
+        safe_name = "unknown"
+    
+    return "digest-summary-%s" % safe_name
 
 
 def collect_all_messages(since_ts):
@@ -211,9 +246,7 @@ class CollectionEngine:
         
         # Derive session ID from source session name — each session gets its own
         # lock file, enabling true parallel execution without contention.
-        import re
-        safe_name = re.sub(r'[^a-zA-Z0-9]+', '-', name.lower()).strip('-')[:40]
-        sid = "digest-summary-%s" % safe_name
+        sid = derive_session_id(name)
         
         try:
             summary = await async_compose_summary(formatted, session_id=sid)
