@@ -560,8 +560,9 @@ def test_multiple_recap_entries():
     entries = ["First recap entry", "Second recap entry", "Third recap entry"]
     for entry in entries:
         m = drop_log_marker()
-        send_message(entry, wait_after=2)
-        wait_for_log(m, "recorded", timeout=10)
+        send_message(entry, wait_after=1)
+        found, _ = wait_for_log(m, "recorded", timeout=15)
+        assert found, f"Bot didn't record entry: '{entry}'"
 
     files = get_test_files(wait_timeout=5)
     assert len(files) >= 1, "No digest file"
