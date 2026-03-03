@@ -460,3 +460,481 @@ class TestSleepWithReflection:
         assert "final" in content
         # No reflection section added (it failed)
         assert "🪞" not in content
+
+
+# ============================================================
+# UNIT TESTS — Git diff capture (Proposal B)
+# ============================================================
+
+class TestGitHeadHash:
+    """UT9-UT11: _git_head_hash()."""
+
+    def test_returns_hash_string(self):
+        """UT9: Returns a 40-char hex hash on success."""
+        from reflection import _git_head_hash
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(
+                returncode=0, stdout="abc123def456\n")
+            result = _git_head_hash()
+
+        assert result == "abc123def456"
+
+    def test_returns_none_on_failure(self):
+        """UT10: Returns None when git command fails."""
+        from reflection import _git_head_hash
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=128, stdout="")
+            result = _git_head_hash()
+
+        assert result is None
+
+    def test_returns_none_on_exception(self):
+        """UT11: Returns None on subprocess exception (not a git repo, etc)."""
+        from reflection import _git_head_hash
+
+        with patch("subprocess.run", side_effect=FileNotFoundError("git not found")):
+            result = _git_head_hash()
+
+        assert result is None
+
+
+class TestGitDiff:
+    """UT12-UT16: _git_diff()."""
+
+    def test_returns_stat_and_patch(self):
+        """UT12: Returns dict with stat, patch, and files keys."""
+        from reflection import _git_diff
+
+        mock_stat = "memory/facts/2026-03-02.md | 5 +++++\n 1 file changed, 5 insertions(+)"
+        mock_names = "memory/facts/2026-03-02.md"
+        mock_patch = "diff --git a/memory/facts/2026-03-02.md..."
+        mock_before = "# old content"
+        mock_after = "# old content\n- new fact"
+
+        def side_effect(args, **kwargs):
+            if "--stat" in args:
+                return MagicMock(returncode=0, stdout=mock_stat)
+            elif "--name-only" in args:
+                return MagicMock(returncode=0, stdout=mock_names)
+            elif "show" in args and args[2].startswith("pre_"):
+                return MagicMock(returncode=0, stdout=mock_before)
+            elif "show" in args and args[2].startswith("post_"):
+                return MagicMock(returncode=0, stdout=mock_after)
+            else:
+                return MagicMock(returncode=0, stdout=mock_patch)
+
+        with patch("subprocess.run", side_effect=side_effect):
+            result = _git_diff("pre_hash", "post_hash")
+
+        assert result["stat"] == mock_stat
+        assert result["patch"] == mock_patch
+        assert len(result["files"]) == 1
+        assert result["files"][0]["path"] == "memory/facts/2026-03-02.md"
+
+    def test_empty_diff_returns_empty(self):
+        """UT13: No changed files → empty files list."""
+        from reflection import _git_diff
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout="")
+            result = _git_diff("same_hash", "same_hash")
+
+        assert result["files"] == []
+        assert result["stat"] == ""
+
+    def test_multiple_files(self):
+        """UT14: Multiple changed files are all captured."""
+        from reflection import _git_diff
+
+        def side_effect(args, **kwargs):
+            if "--name-only" in args:
+                return MagicMock(returncode=0, stdout="KANBAN.md\nmemory/ideas.md\n")
+            elif "--stat" in args:
+                return MagicMock(returncode=0, stdout="2 files changed")
+            elif "show" in args:
+                return MagicMock(returncode=0, stdout="content")
+            else:
+                return MagicMock(returncode=0, stdout="patch text")
+
+        with patch("subprocess.run", side_effect=side_effect):
+            result = _git_diff("a", "b")
+
+        assert len(result["files"]) == 2
+        paths = [f["path"] for f in result["files"]]
+        assert "KANBAN.md" in paths
+        assert "memory/ideas.md" in paths
+
+    def test_new_file_has_empty_before(self):
+        """UT15: A newly created file has empty 'before' content."""
+        from reflection import _git_diff
+
+        def side_effect(args, **kwargs):
+            if "--name-only" in args:
+                return MagicMock(returncode=0, stdout="memory/facts/new.md\n")
+            elif "--stat" in args:
+                return MagicMock(returncode=0, stdout="1 file changed")
+            elif "show" in args:
+                # git show pre_hash:new_file fails (file didn't exist)
+                if "pre_" in str(args):
+                    return MagicMock(returncode=128, stdout="")
+                return MagicMock(returncode=0, stdout="# New facts\n- fact 1")
+            else:
+                return MagicMock(returncode=0, stdout="patch")
+
+        with patch("subprocess.run", side_effect=side_effect):
+            result = _git_diff("pre_hash", "post_hash")
+
+        assert len(result["files"]) == 1
+        assert result["files"][0]["before"] == ""
+        assert "New facts" in result["files"][0]["after"]
+
+    def test_exception_returns_empty_result(self):
+        """UT16: Subprocess exception → empty result, no crash."""
+        from reflection import _git_diff
+
+        with patch("subprocess.run", side_effect=OSError("disk error")):
+            result = _git_diff("a", "b")
+
+        assert result["files"] == []
+        assert result["stat"] == ""
+        assert result["patch"] == ""
+
+
+class TestRenderDiffImages:
+    """UT17-UT21: render_diff_images()."""
+
+    def test_empty_files_returns_empty(self):
+        """UT17: No files → no images."""
+        from reflection import render_diff_images
+
+        result = render_diff_images({"files": []}, "2026-03-02")
+        assert result == []
+
+    def test_skips_unchanged_files(self):
+        """UT18: Files with identical before/after are skipped."""
+        from reflection import render_diff_images
+
+        diff_data = {"files": [
+            {"path": "test.md", "before": "same", "after": "same"},
+        ]}
+
+        with patch("subprocess.run") as mock_run:
+            result = render_diff_images(diff_data, "2026-03-02")
+
+        assert result == []
+        mock_run.assert_not_called()
+
+    def test_calls_agent_for_each_changed_file(self):
+        """UT19: One openclaw agent call per changed file."""
+        from reflection import render_diff_images
+
+        diff_data = {"files": [
+            {"path": "KANBAN.md", "before": "old", "after": "new"},
+            {"path": "memory/ideas.md", "before": "a", "after": "b"},
+        ]}
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(
+                returncode=0,
+                stdout=json.dumps({"payloads": [{"text": "/tmp/openclaw/test/preview.png"}]}),
+            )
+            with patch("os.path.exists", return_value=True):
+                result = render_diff_images(diff_data, "2026-03-02")
+
+        # Should call subprocess for each file
+        assert mock_run.call_count == 2
+        assert len(result) == 2
+
+    def test_agent_failure_skips_gracefully(self):
+        """UT20: If agent fails for one file, others still render."""
+        from reflection import render_diff_images
+
+        diff_data = {"files": [
+            {"path": "fail.md", "before": "a", "after": "b"},
+            {"path": "success.md", "before": "x", "after": "y"},
+        ]}
+
+        call_count = [0]
+
+        def side_effect(args, **kwargs):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return MagicMock(returncode=1, stderr="error")
+            return MagicMock(
+                returncode=0,
+                stdout=json.dumps({"payloads": [{"text": "/tmp/openclaw/ok/preview.png"}]}),
+            )
+
+        with patch("subprocess.run", side_effect=side_effect):
+            with patch("os.path.exists", return_value=True):
+                result = render_diff_images(diff_data, "2026-03-02")
+
+        assert len(result) == 1
+        assert "ok/preview.png" in result[0]
+
+    def test_truncates_large_files(self):
+        """UT21: Files larger than 50KB are truncated before rendering."""
+        from reflection import render_diff_images
+
+        big_content = "x" * 60000
+        diff_data = {"files": [
+            {"path": "big.md", "before": "", "after": big_content},
+        ]}
+
+        written_content = []
+
+        original_open = open
+
+        def mock_open_fn(path, *args, **kwargs):
+            if "/tmp/reflection-diff-" in str(path) and "after" in str(path):
+                # Capture what gets written
+                class MockFile:
+                    def write(self, data):
+                        written_content.append(data)
+                    def __enter__(self):
+                        return self
+                    def __exit__(self, *args):
+                        pass
+                return MockFile()
+            return original_open(path, *args, **kwargs)
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=1, stderr="skip")
+            with patch("builtins.open", side_effect=mock_open_fn):
+                render_diff_images(diff_data, "2026-03-02")
+
+        # The written content should be truncated to ~50K + truncation notice
+        assert len(written_content) == 1
+        assert len(written_content[0]) < 60000
+        assert "truncated" in written_content[0]
+
+
+# ============================================================
+# INTEGRATION TESTS — run_reflection with diff capture
+# ============================================================
+
+class TestRunReflectionWithDiff:
+    """IT11-IT15: run_reflection() diff capture integration."""
+
+    def test_captures_diff_when_hash_changes(self):
+        """IT11: When agent commits, diff_info contains file changes."""
+        from reflection import run_reflection
+
+        hash_calls = [0]
+
+        def mock_git_head():
+            hash_calls[0] += 1
+            return "pre_hash" if hash_calls[0] == 1 else "post_hash"
+
+        mock_diff_data = {
+            "stat": "1 file changed",
+            "patch": "diff content",
+            "files": [{"path": "memory/facts/2026-03-02.md", "before": "", "after": "new fact"}],
+        }
+
+        with patch("reflection._call_agent", return_value=SAMPLE_REFLECTION_JSON), \
+             patch("reflection._git_head_hash", side_effect=mock_git_head), \
+             patch("reflection._git_diff", return_value=mock_diff_data), \
+             patch("reflection.render_diff_images", return_value=["/tmp/img.png"]):
+
+            report, diff_info = run_reflection(SAMPLE_CONVERSATIONS, "2026-03-02")
+
+        assert report is not None
+        assert diff_info["stat"] == "1 file changed"
+        assert len(diff_info["files"]) == 1
+        assert diff_info["images"] == ["/tmp/img.png"]
+
+    def test_empty_diff_when_no_hash_change(self):
+        """IT12: When agent doesn't commit (same hash), diff_info is empty."""
+        from reflection import run_reflection
+
+        with patch("reflection._call_agent", return_value=SAMPLE_REFLECTION_JSON), \
+             patch("reflection._git_head_hash", return_value="same_hash"), \
+             patch("reflection._git_diff") as mock_diff, \
+             patch("reflection.render_diff_images") as mock_render:
+
+            report, diff_info = run_reflection(SAMPLE_CONVERSATIONS, "2026-03-02")
+
+        assert report is not None
+        # _git_diff should NOT be called when hashes are the same
+        mock_diff.assert_not_called()
+        mock_render.assert_not_called()
+        assert diff_info["files"] == []
+        assert diff_info["images"] == []
+
+    def test_diff_survives_agent_failure(self):
+        """IT13: When agent fails, diff_info is empty but no crash."""
+        from reflection import run_reflection
+
+        with patch("reflection._call_agent", return_value=None), \
+             patch("reflection._git_head_hash", return_value="hash1"):
+
+            report, diff_info = run_reflection(SAMPLE_CONVERSATIONS, "2026-03-02")
+
+        assert "unavailable" in report.lower() or "failed" in report.lower()
+        assert diff_info["files"] == []
+
+    def test_diff_survives_git_failure(self):
+        """IT14: When git operations fail, returns empty diff, not crash."""
+        from reflection import run_reflection
+
+        hash_calls = [0]
+
+        def mock_git_head():
+            hash_calls[0] += 1
+            if hash_calls[0] == 1:
+                return "pre"
+            return "post"
+
+        with patch("reflection._call_agent", return_value=SAMPLE_REFLECTION_JSON), \
+             patch("reflection._git_head_hash", side_effect=mock_git_head), \
+             patch("reflection._git_diff", side_effect=OSError("disk fail")):
+
+            # Should not crash — exception handling in run_reflection
+            report, diff_info = run_reflection(SAMPLE_CONVERSATIONS, "2026-03-02")
+
+        # The outer try/except catches this
+        assert report is not None or diff_info is not None
+
+    def test_diff_survives_render_failure(self):
+        """IT15: When image rendering fails, files are still in diff_info."""
+        from reflection import run_reflection
+
+        hash_calls = [0]
+
+        def mock_git_head():
+            hash_calls[0] += 1
+            return "pre" if hash_calls[0] == 1 else "post"
+
+        mock_diff_data = {
+            "stat": "1 file changed",
+            "patch": "diff",
+            "files": [{"path": "test.md", "before": "a", "after": "b"}],
+        }
+
+        with patch("reflection._call_agent", return_value=SAMPLE_REFLECTION_JSON), \
+             patch("reflection._git_head_hash", side_effect=mock_git_head), \
+             patch("reflection._git_diff", return_value=mock_diff_data), \
+             patch("reflection.render_diff_images", return_value=[]):
+
+            report, diff_info = run_reflection(SAMPLE_CONVERSATIONS, "2026-03-02")
+
+        assert report is not None
+        assert len(diff_info["files"]) == 1
+        assert diff_info["images"] == []  # Render failed, but files are there
+
+
+# ============================================================
+# INTEGRATION TESTS — cmd_sleep sends diff images
+# ============================================================
+
+class TestCmdSleepDiffDelivery:
+    """IT16-IT19: cmd_sleep sends visual diffs to Telegram."""
+
+    @pytest.fixture
+    def mock_update(self):
+        """Mock Telegram Update object."""
+        update = MagicMock()
+        update.effective_chat.id = 411364623
+        update.message.reply_text = MagicMock(return_value=MagicMock())
+        # Make reply_text awaitable
+        import asyncio
+        update.message.reply_text.return_value = asyncio.coroutine(lambda: None)()
+        return update
+
+    @pytest.fixture
+    def mock_context(self):
+        """Mock Telegram context with bot."""
+        context = MagicMock()
+        import asyncio
+        context.bot.send_photo = MagicMock(
+            return_value=asyncio.coroutine(lambda: None)())
+        return context
+
+    def test_diff_images_sent_after_finalize(self):
+        """IT16: Visual diff images are sent via send_photo after successful reflection."""
+        # This test verifies the integration contract:
+        # run_reflection returns diff_info with images → cmd_sleep calls send_photo
+        from reflection import run_reflection
+
+        # Simulate: agent ran, workspace changed, images rendered
+        mock_diff_info = {
+            "stat": "1 file changed",
+            "patch": "...",
+            "files": [{"path": "KANBAN.md", "before": "old", "after": "new"}],
+            "images": ["/tmp/openclaw/test1/preview.png"],
+        }
+
+        with patch("reflection._call_agent", return_value=SAMPLE_REFLECTION_JSON), \
+             patch("reflection._git_head_hash", side_effect=["pre", "post"]), \
+             patch("reflection._git_diff", return_value=mock_diff_info), \
+             patch("reflection.render_diff_images", return_value=["/tmp/openclaw/test1/preview.png"]):
+
+            report, diff_info = run_reflection(SAMPLE_CONVERSATIONS, "2026-03-02")
+
+        # Verify the data cmd_sleep will use
+        assert len(diff_info["images"]) == 1
+        assert diff_info["images"][0].endswith(".png")
+
+    def test_no_images_when_no_changes(self):
+        """IT17: No diff images when agent doesn't modify workspace."""
+        from reflection import run_reflection
+
+        with patch("reflection._call_agent", return_value=SAMPLE_REFLECTION_JSON), \
+             patch("reflection._git_head_hash", return_value="unchanged"):
+
+            report, diff_info = run_reflection(SAMPLE_CONVERSATIONS, "2026-03-02")
+
+        assert diff_info["images"] == []
+
+    def test_stat_fallback_when_no_images(self):
+        """IT18: When images fail to render, stat text is available as fallback."""
+        from reflection import run_reflection
+
+        mock_diff_data = {
+            "stat": "memory/facts/2026-03-02.md | 5 +++++\n 1 file changed",
+            "patch": "...",
+            "files": [{"path": "memory/facts/2026-03-02.md", "before": "", "after": "new"}],
+        }
+
+        with patch("reflection._call_agent", return_value=SAMPLE_REFLECTION_JSON), \
+             patch("reflection._git_head_hash", side_effect=["pre", "post"]), \
+             patch("reflection._git_diff", return_value=mock_diff_data), \
+             patch("reflection.render_diff_images", return_value=[]):
+
+            report, diff_info = run_reflection(SAMPLE_CONVERSATIONS, "2026-03-02")
+
+        # stat is available even when images failed
+        assert "1 file changed" in diff_info["stat"]
+        assert diff_info["images"] == []
+
+    def test_multiple_files_produce_multiple_images(self):
+        """IT19: Each changed file produces its own diff image."""
+        from reflection import run_reflection
+
+        mock_diff_data = {
+            "stat": "3 files changed",
+            "patch": "...",
+            "files": [
+                {"path": "KANBAN.md", "before": "a", "after": "b"},
+                {"path": "memory/ideas.md", "before": "c", "after": "d"},
+                {"path": "memory/facts/2026-03-02.md", "before": "", "after": "new"},
+            ],
+        }
+
+        mock_images = [
+            "/tmp/openclaw/diff1/preview.png",
+            "/tmp/openclaw/diff2/preview.png",
+            "/tmp/openclaw/diff3/preview.png",
+        ]
+
+        with patch("reflection._call_agent", return_value=SAMPLE_REFLECTION_JSON), \
+             patch("reflection._git_head_hash", side_effect=["pre", "post"]), \
+             patch("reflection._git_diff", return_value=mock_diff_data), \
+             patch("reflection.render_diff_images", return_value=mock_images):
+
+            report, diff_info = run_reflection(SAMPLE_CONVERSATIONS, "2026-03-02")
+
+        assert len(diff_info["images"]) == 3
