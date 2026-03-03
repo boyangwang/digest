@@ -78,6 +78,17 @@ SAMPLE_AGENT_RESPONSE = {
     "payloads": [{"text": SAMPLE_REFLECTION_JSON}],
 }
 
+# Real agents produce MULTIPLE payloads: initial thoughts → tool calls → final text.
+# payloads[0] is a fragment; payloads[-1] is the real report. (P1 bug 2026-03-03)
+SAMPLE_MULTI_PAYLOAD_RESPONSE = {
+    "payloads": [
+        {"text": "Let me check what already exists before writing:"},
+        {"text": "Files look comprehensive. Let me add missing items:"},
+        {"text": "Now commit and push:"},
+        {"text": "Committed abc1234.\n\n" + SAMPLE_REFLECTION_JSON},
+    ],
+}
+
 
 @pytest.fixture
 def workspace_dir(tmp_path):
@@ -1152,6 +1163,57 @@ class TestCallAgentRetry:
         assert "attempt 1/3" in log_messages[0].lower()
         assert "attempt 2/3" in log_messages[1].lower()
         assert "attempt 3/3" in log_messages[2].lower()
+
+
+# ============================================================
+# UNIT TESTS — Multi-payload agent response (P1 bug 2026-03-03)
+# ============================================================
+
+class TestMultiPayloadResponse:
+    """UT-MP1/2: Agent produces multiple payloads; code must use the LAST one."""
+
+    def test_multi_payload_returns_last_text(self):
+        """UT-MP1: With 4 payloads, _call_agent returns the LAST non-empty text."""
+        from reflection import _call_agent
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(
+                returncode=0,
+                stdout=json.dumps(SAMPLE_MULTI_PAYLOAD_RESPONSE),
+            )
+
+            response, reason = _call_agent("test prompt", timeout=10)
+
+        assert reason is None
+        assert response is not None
+        # Must be the LAST payload, not the first
+        assert "Let me check" not in response  # NOT payloads[0]
+        assert "Committed" in response  # payloads[-1]
+        assert len(response) > 100  # Full response, not fragment
+
+    def test_multi_payload_skips_empty_trailing(self):
+        """UT-MP2: If last payload is empty, takes the previous non-empty one."""
+        from reflection import _call_agent
+
+        response_with_empty_tail = {
+            "payloads": [
+                {"text": "Initial thought"},
+                {"text": "The real reflection report here"},
+                {"text": ""},   # empty
+                {"text": "  "},  # whitespace only
+            ],
+        }
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(
+                returncode=0,
+                stdout=json.dumps(response_with_empty_tail),
+            )
+
+            response, reason = _call_agent("test prompt", timeout=10)
+
+        assert reason is None
+        assert response == "The real reflection report here"
 
 
 # ============================================================
