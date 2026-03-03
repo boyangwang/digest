@@ -10,7 +10,7 @@
 
 | ID | PRD | Status | Summary | Tasks | Next Step |
 |------|-----|--------|---------|-------|-----------|
-| DIGEST-009 | [`prd-collection-engine.md`](specs/prd-collection-engine.md) | 🟡 Active | Parallel + retriable + supersedable collection with generation counter | 0/14 | Tests written, spawning agent |
+| DIGEST-009 | [`prd-collection-engine.md`](specs/prd-collection-engine.md) | 🟢 Done | Parallel + retriable + supersedable collection with generation counter | 12/14 | T13-T14 docs cleanup |
 
 ---
 
