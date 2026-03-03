@@ -133,30 +133,27 @@ def _find_input_field():
 
 
 def send_message(text, wait_after=3):
-    """Send a message and wait for bot to process it.
+    """Send a message via AppleScript keystroke.
 
-    Uses AppleScript keystroke for reliable text input into Telegram Desktop.
-    Peekaboo's `type` command doesn't reliably reach Telegram's input field
-    (text reports success but value stays empty).
+    Uses Tab to ensure focus is on the message input field,
+    then types text and presses Return.
     """
     import subprocess as sp
 
-    # Focus Telegram and use AppleScript keystroke (proven reliable)
-    sp.run(["osascript", "-e", """
+    escaped = text.replace("\\", "\\\\").replace('"', '\\"')
+    result = sp.run(["osascript", "-e", f"""
 tell application "Telegram" to activate
-delay 0.3
+delay 0.2
 tell application "System Events"
     tell process "Telegram"
-        keystroke "a" using command down
-        delay 0.1
-        key code 51
-        delay 0.1
-        keystroke "%s"
-        delay 0.2
+        keystroke "{escaped}"
+        delay 0.3
         key code 36
     end tell
 end tell
-""" % text.replace('"', '\\"').replace("'", "\\'")], timeout=10, capture_output=True)
+"""], timeout=10, capture_output=True, text=True)
+    if result.returncode != 0:
+        print(f"[send_message] osascript failed: {result.stderr[:200]}")
     time.sleep(wait_after)
 
 
@@ -209,8 +206,10 @@ def setup_telegram():
 def clean_test_files():
     """Clean test files before each test."""
     cleanup_test_dir()
+    # Brief pause between tests — Telegram needs time to process bot replies
+    # before accepting new keyboard input
+    time.sleep(1)
     yield
-    cleanup_test_dir()
 
 
 # ============================================================
