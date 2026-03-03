@@ -571,10 +571,21 @@ def render_diff_images(diff_data: dict, date_str: str) -> list[str]:
                 % (before_path, after_path, filepath)
             )
 
+            # Use unique session ID per file to avoid lock conflicts
+            safe_name = re.sub(r'[^a-zA-Z0-9-]', '-', filepath)[:40]
+            session_id = "diff-render-%s" % safe_name
+
+            # Clear any stale lock before calling
+            lock_path = "/Users/claw/.openclaw/agents/main/sessions/%s.jsonl.lock" % session_id
+            try:
+                os.unlink(lock_path)
+            except FileNotFoundError:
+                pass
+
             result = subprocess.run(
                 [
                     "openclaw", "agent", "--local",
-                    "--session-id", "reflection-diff-render",
+                    "--session-id", session_id,
                     "--message", msg,
                     "--json",
                     "--timeout", "120",
