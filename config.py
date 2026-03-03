@@ -28,6 +28,7 @@ ALLOWED_USER_IDS = {BOYANG_USER_ID, TEST_USER_ID} - {0}
 VAULT_PATH = Path("/Users/claw/Documents/NotesVault")
 DIGEST_DIR = VAULT_PATH / "Artificial-Colloquia" / "Doudou-Digest"
 ATTACHMENTS_DIR = DIGEST_DIR / "attachments"
+PID_FILE = Path("/tmp/digest-bot.pid")
 
 # Test mode uses a separate directory to avoid contaminating production
 TEST_DIGEST_DIR = DIGEST_DIR / "_test"

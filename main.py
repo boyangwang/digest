@@ -14,8 +14,11 @@ State machine:
   ACTIVE → /sleep  → finalize, stop nudging              → IDLE
 """
 
+import atexit
+import fcntl
 import logging
 import os
+import signal
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -298,6 +301,105 @@ logger = logging.getLogger("digest-bot")
 # --- Global state ---
 _scheduler = DigestScheduler()
 _app = None
+_lock_fd = None  # Module-level — must stay open for process lifetime
+
+
+# ============================================================
+# T5: Singleton Guard — PID lock, SIGTERM handler, orphan cleanup
+# ============================================================
+
+
+def acquire_pid_lock(pidfile="/tmp/digest-bot.pid"):
+    """Acquire exclusive PID lock via fcntl.flock. Exit if another instance is running.
+    
+    Uses flock (not PID-based check) because:
+    - Auto-releases on ANY process death, including SIGKILL — OS closes the fd
+    - No stale PID file problem — lock is held by fd, not by file content
+    - No race condition between checking PID and starting
+    - The PID is still written for informational/debugging purposes
+    
+    Returns the lock file descriptor (must stay open for process lifetime).
+    """
+    global _lock_fd
+    _lock_fd = open(pidfile, "w")
+    try:
+        fcntl.flock(_lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        # Another instance holds the lock
+        # Read its PID for the error message
+        try:
+            with open(pidfile) as f:
+                old_pid = f.read().strip()
+        except Exception:
+            old_pid = "unknown"
+        logger.fatal("Another instance running (PID %s). Exiting." % old_pid)
+        sys.exit(1)
+    
+    # Lock acquired — write our PID for informational purposes
+    _lock_fd.write(str(os.getpid()))
+    _lock_fd.flush()
+    logger.info("PID lock acquired: %s (PID %d)" % (pidfile, os.getpid()))
+    return _lock_fd
+
+
+def _remove_pidfile(pidfile="/tmp/digest-bot.pid"):
+    """Remove the PID file if it exists."""
+    try:
+        if os.path.exists(pidfile):
+            os.remove(pidfile)
+            logger.info("PID file removed: %s" % pidfile)
+    except Exception as e:
+        logger.warning("Failed to remove PID file: %s" % e)
+
+
+def _handle_sigterm(signum, frame, pidfile="/tmp/digest-bot.pid"):
+    """Handle SIGTERM — log and exit cleanly."""
+    logger.info("Received SIGTERM — shutting down gracefully.")
+    _remove_pidfile(pidfile=pidfile)
+    sys.exit(0)
+
+
+def identify_orphan_files(digest_dir):
+    """Scan directory for .md files that are status: active, ≤ 400 bytes.
+    
+    Returns list of file paths (strings).
+    These are likely orphan files from duplicate bot instances.
+    """
+    digest_path = Path(digest_dir)
+    if not digest_path.exists():
+        return []
+    
+    orphans = []
+    for md_file in digest_path.glob("*.md"):
+        try:
+            size = md_file.stat().st_size
+            if size > 400:
+                # Skip files with real content
+                continue
+            
+            content = md_file.read_text(encoding="utf-8")
+            
+            # Check if status is active (both quoted and unquoted YAML)
+            if 'status: "active"' in content or 'status: active' in content:
+                orphans.append(str(md_file))
+        except Exception as e:
+            logger.warning("Could not check file %s: %s" % (md_file, e))
+            continue
+    
+    return orphans
+
+
+def delete_orphan_files(file_list):
+    """Delete files in list, returns count deleted."""
+    deleted = 0
+    for filepath in file_list:
+        try:
+            os.remove(filepath)
+            logger.info("Deleted orphan: %s" % filepath)
+            deleted += 1
+        except Exception as e:
+            logger.warning("Could not delete %s: %s" % (filepath, e))
+    return deleted
 
 
 async def _send_to_boyang(text):
@@ -1080,6 +1182,15 @@ async def post_init(application):
 def main():
     logger.info("=" * 50)
     logger.info("Sleep Digest Bot starting...")
+
+    # T5: Acquire PID lock BEFORE any Telegram operations
+    acquire_pid_lock()
+    
+    # T5: Register SIGTERM handler
+    signal.signal(signal.SIGTERM, _handle_sigterm)
+    
+    # T5: Register atexit cleanup
+    atexit.register(_remove_pidfile)
 
     app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
 

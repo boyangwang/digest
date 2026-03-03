@@ -235,9 +235,14 @@ class TestConcurrentProcesses:
             text=True,
         )
 
-        # Wait for child to be ready
-        line = proc.stdout.readline()
-        assert "READY" in line, "Child didn't start properly"
+        # Wait for child to be ready (read until we find READY or timeout)
+        ready = False
+        for _ in range(10):  # Try up to 10 lines
+            line = proc.stdout.readline()
+            if "READY" in line:
+                ready = True
+                break
+        assert ready, "Child didn't print READY (logging may have interfered)"
 
         # Verify lock is held
         fd_check = open(pidfile, "r+")

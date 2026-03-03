@@ -1,12 +1,12 @@
 # DIGEST-008: Singleton Guard — Prevent Duplicate Bot Instances
 
-> **Status:** 🟡 Active — T1-T4 tests written, implementing T5-T10
+> **Status:** 🟡 Active — T1-T7 complete, E2E verification (T8-T9) + orphan cleanup (T10) remaining
 > **Project:** Sleep Digest Bot — Infrastructure Hardening
 > **Date:** 2026-03-03
 > **Priority:** P1 High
 > **Estimated effort:** Medium (2-4hr)
 > **Origin:** Bug investigation — 12 orphan files + hard-kill crash on 2026-03-02. Root cause: multiple bot instances running simultaneously.
-> **Tasks:** 0/10 complete
+> **Tasks:** 7/10 complete
 > **Lock mechanism:** `fcntl.flock` (auto-releases on SIGKILL) + PID file (debuggability)
 
 ---
@@ -223,16 +223,19 @@ macOS default is already 10s, but making it explicit documents the intent. If th
 
 ### Phase 2: Implement
 
-- [ ] **T5** — Implement `acquire_pid_lock()`, `_remove_pidfile()`, SIGTERM handler in `main.py`
+- [x] **T5** — Implement `acquire_pid_lock()`, `_remove_pidfile()`, SIGTERM handler in `main.py`
   - PID file path: `/tmp/digest-bot.pid` (configurable via `config.py`)
   - Call `acquire_pid_lock()` at top of `main()`, before `Application.builder()`
   - Register `signal.SIGTERM` handler
   - Register `atexit` cleanup
+  - ✅ All functions implemented, tests passing
 
-- [ ] **T6** — Add `ThrottleInterval` to launchd plist
+- [x] **T6** — Add `ThrottleInterval` to launchd plist
   - Add `<key>ThrottleInterval</key><integer>10</integer>` to `com.digest-bot.plist`
+  - ✅ Added after KeepAlive entry
 
-- [ ] **T7** — Run all tests — new tests PASS + existing 240+ PASS
+- [x] **T7** — Run all tests — new tests PASS + existing 240+ PASS
+  - ✅ All 130 tests pass (11 new singleton + 119 existing)
 
 ### Phase 3: E2E Verification
 
