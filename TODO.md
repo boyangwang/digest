@@ -2,7 +2,7 @@
 
 > **New developer / AI agent: START HERE.**
 > This file tracks all work — active, completed, and historical.
-> **Read [`specs/SOP.md`](specs/SOP.md) for the mandatory step-by-step workflow.**
+> **Read the [Mandatory Development Process](README.md#-mandatory-development-process) in README.md.**
 
 ---
 
@@ -42,7 +42,7 @@
 
 | Doc | Purpose |
 |-----|---------|
-| [`specs/SOP.md`](specs/SOP.md) | **Mandatory** 5-step lifecycle (Intake → TDD → Implement → E2E → Deploy) |
+| [README.md](README.md) | **Mandatory** 5-step lifecycle (Intake → TDD → Implement → E2E → Deploy) |
 | [`specs/SPEC.md`](specs/SPEC.md) | Core spec — 27 numbered definitions |
 | [`specs/TESTING.md`](specs/TESTING.md) | Three-tier testing strategy (unit + integration + E2E) |
 
