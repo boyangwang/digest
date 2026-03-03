@@ -84,13 +84,15 @@ digest-bot/
 
 **All specifications live in `specs/`.** Start with **[`specs/INDEX.md`](specs/INDEX.md)** — it tracks every PRD's status and tells you what to work on next.
 
-### Workflow
+### Workflow (Mandatory SOP)
 
-1. **Bug reported** → Write PRD in `specs/prd-<name>.md` with tasks `T1..TN`
-2. **PRD approved** → Write failing tests (TDD)
-3. **Implement** → Check off tasks in PRD as completed
-4. **E2E verify** → All tests pass via `run_e2e.py` + unit/integration via `pytest`
-5. **Update `specs/INDEX.md`** — move PRD to Done
+**Full process in [`specs/SOP.md`](specs/SOP.md).** Summary:
+
+1. **Intake** → PRD in `specs/prd-<name>.md`, add to INDEX.md
+2. **TDD** → Write failing tests first
+3. **Implement** → Check off tasks, commit per task
+4. **E2E** → `python3 tests/run_e2e.py` must pass
+5. **Deploy** → Restart bot, verify production, close PRD
 6. **Never claim "done" without E2E green**
 
 ### Key Files
