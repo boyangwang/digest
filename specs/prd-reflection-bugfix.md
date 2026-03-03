@@ -187,16 +187,84 @@ Full report saved to Obsidian 📓
 
 ---
 
+### Phase 4: Retry + Manual Re-run
+
+- [ ] **T9** — Add automatic retry to `_call_agent()` in `reflection.py`
+  - On failure (rc≠0, timeout, empty response): retry up to 2 more times (3 total attempts)
+  - Exponential backoff: 5s, 15s between retries
+  - Log each attempt: `"Reflection agent attempt %d/%d failed: %s"`
+  - Only return None after all retries exhausted
+
+- [ ] **T10** — Add `/reflect` command for manual re-run
+  - New handler in `main.py`: `cmd_reflect(update, context)`
+  - Behavior:
+    1. Find the most recent finalized digest file (status="final")
+    2. If it already has a real reflection (not fallback), ask for confirmation: "Reflection already exists. Re-run? Reply /reflect confirm"
+    3. Collect conversations using that file's `coverage_from` / `coverage_to`
+    4. Run `run_reflection()` with retry
+    5. Overwrite the reflection section in the file (replace, not append)
+    6. Send structured reflection message to user (same format as T1)
+  - Optional argument: `/reflect 2026-03-02` to target a specific date
+  - Boyang-only (same `_check_user` but production users only, not test)
+
+- [ ] **T11** — Add `/reflect` to bot command menu and help text
+  - Update `cmd_start` help message
+  - Register handler in `main.py` setup
+
+- [ ] **T12** — E2E test for `/reflect` re-run
+  - In `tests/run_e2e.py`:
+    1. `/digest` → text → `/sleep` (creates finalized file with reflection)
+    2. `/reflect` → verify new reflection message sent
+    3. Verify file's reflection section was updated (not duplicated)
+
+---
+
+## Acceptance Criteria
+
+1. When Boyang sends `/sleep` with an active digest:
+   - Bot sends "晚安 🌙 Running reflection..."
+   - Bot sends structured reflection summary (category counts + top items)
+   - Bot sends "✅ Digest saved to Obsidian"
+   - Digest file in Obsidian contains full reflection section
+2. When reflection agent fails:
+   - Agent retries up to 3 times with backoff before giving up
+   - Bot sends "⚠️ Reflection failed after 3 attempts" with brief reason
+   - Digest still finalizes (SPEC-REFLECT-05)
+   - Fallback text in file includes error context
+3. When Boyang sends `/reflect`:
+   - Re-runs reflection on most recent finalized digest (or specified date)
+   - Sends structured reflection message
+   - Updates file in-place (replaces old reflection section)
+4. Test mode (`@claw0606`):
+   - `/sleep` sends mock reflection summary message
+   - E2E test verifies message content
+5. No regressions: 277+ unit/integration + 8+ E2E pass
+
+---
+
+## Files to Modify
+
+| File | Changes |
+|------|---------|
+| `reflection.py` | Add `format_reflection_telegram()`, change `run_reflection()` return type, add retry to `_call_agent()` |
+| `main.py` | Modify `cmd_sleep` to send reflection content, add `cmd_reflect` handler, update test mode |
+| `recorder.py` | Add `replace_reflection(report, filepath)` for in-place update |
+| `tests/test_reflection.py` | Add tests for `format_reflection_telegram()`, retry logic, updated return type |
+| `tests/run_e2e.py` | Update `test_sleep_includes_reflection`, add `test_reflect_rerun` |
+
+---
+
 ## Non-Goals
 
 - NOT changing the reflection prompt or agent behavior
-- NOT changing what gets written to the Obsidian file
-- NOT implementing backfill (separate task)
+- NOT changing what gets written to the Obsidian file (beyond reflection section)
+- NOT implementing bulk backfill (separate task — `scripts/backfill.py` exists)
 - NOT fixing the pytest hanging issue (separate investigation)
 
 ---
 
 ## Cost Estimate
 
-- No additional API costs (reflection agent already runs, we're just surfacing its output)
-- Development: ~2hr (implementation) + ~1hr (testing)
+- Retry adds ~$3/failure (2 extra Opus calls × ~$1.50 each) — rare
+- Manual `/reflect` re-run: ~$1.50 per invocation (single Opus call)
+- Development: ~3hr (implementation) + ~1hr (testing)
