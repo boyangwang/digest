@@ -6,7 +6,7 @@ Manages:
   - Every 30 min after 22:30 until /sleep or 07:00: nudge cycle
   - State: has /sleep been received, has digest been generated
 
-Pure timing logic. No LLM. No file I/O (delegates to recorder/collector).
+Pure state machine. No date logic. The digest job is the only reset point.
 """
 
 import logging
@@ -33,7 +33,6 @@ class DigestScheduler:
         self.scheduler = AsyncIOScheduler(timezone=SGT)
         self._sleep_received = False
         self._digest_generated = False
-        self._today: str = ""
         self._on_digest_callback = None
         self._on_nudge_callback = None
 
@@ -42,30 +41,16 @@ class DigestScheduler:
         self._on_digest_callback = on_digest
         self._on_nudge_callback = on_nudge
 
-    def _reset_if_new_day(self):
-        """Reset state at day boundary."""
-        today = datetime.now(SGT).strftime("%Y-%m-%d")
-        if today != self._today:
-            self._today = today
-            self._sleep_received = False
-            self._digest_generated = False
-            logger.info(f"New day: {today}. State reset.")
-
     async def _digest_job(self):
-        """Triggered at 22:30 SGT."""
-        self._reset_if_new_day()
-        if self._digest_generated:
-            logger.info("Digest already generated today. Skipping.")
-            return
-        logger.info("Digest job triggered.")
+        """Triggered at 22:30 SGT. Always starts a new cycle."""
+        logger.info("Digest job triggered. Starting new cycle.")
+        self._sleep_received = False
         self._digest_generated = True
         if self._on_digest_callback:
             await self._on_digest_callback()
 
     async def _nudge_job(self):
-        """Triggered every 30 min during nudge window."""
-        self._reset_if_new_day()
-
+        """Triggered every 30 min during nudge window. Read-only on state."""
         if self._sleep_received:
             logger.info("Sleep received. Skipping nudge.")
             return
@@ -133,20 +118,8 @@ class DigestScheduler:
             replace_existing=True,
         )
 
-        # Midnight reset job
-        self.scheduler.add_job(
-            self._midnight_reset,
-            CronTrigger(hour=12, minute=0, timezone=SGT),  # Reset at noon (safe boundary)
-            id="reset",
-            replace_existing=True,
-        )
-
         self.scheduler.start()
         logger.info("Scheduler started. Digest at 22:30, nudges every 30 min.")
-
-    async def _midnight_reset(self):
-        """Reset daily state. Runs at noon to ensure clean boundary."""
-        self._reset_if_new_day()
 
     def stop(self):
         """Stop the scheduler."""
