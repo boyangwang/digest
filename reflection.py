@@ -242,6 +242,156 @@ _CATEGORIES = [
 ]
 
 
+# ============================================================
+# Markdown response parsing (primary — agent returns markdown)
+# ============================================================
+
+# Map markdown section header keywords → parsed dict keys.
+# Handles various emoji and label combos the agent might use.
+_MD_SECTION_MAP = [
+    ("facts",               ["facts", "durable facts"]),
+    ("feedback_lessons",    ["feedback", "lessons", "feedback & lessons", "feedback lessons"]),
+    ("rules_incidents",     ["rules", "incidents", "rules & incidents"]),
+    ("compliments",         ["compliments", "compliment"]),
+    ("decisions",           ["decisions", "decision"]),
+    ("action_items",        ["action items", "action item"]),
+    ("ideas",               ["ideas", "idea"]),
+    ("technical_learnings", ["technical", "technical learnings", "technical learning"]),
+]
+
+# Lines to skip when counting items (placeholders, not real content)
+_PLACEHOLDER_PATTERNS = [
+    "_none identified",
+    "_no items",
+    "_none today",
+    "_none extracted",
+    "_reflection unavailable",
+    "(no items",
+]
+
+
+def parse_reflection_markdown(text: str) -> dict:
+    """Parse agent's MARKDOWN response into structured categories.
+
+    The reflection agent returns markdown with sections like:
+        ## 📊 Facts (11 items)
+        - Fact one
+        - Fact two
+
+    This function extracts the bullet items under each section header,
+    and parses the Stats footer for message/item counts.
+
+    Always returns a complete dict with all 8 categories + stats.
+    """
+    result = {
+        "facts": [],
+        "feedback_lessons": [],
+        "rules_incidents": [],
+        "compliments": [],
+        "decisions": [],
+        "action_items": [],
+        "ideas": [],
+        "technical_learnings": [],
+        "stats": {"messages_processed": 0, "sessions_scanned": 0, "items_extracted": 0},
+    }
+
+    if not text or not text.strip():
+        return result
+
+    lines = text.split("\n")
+    current_category = None
+
+    for line in lines:
+        stripped = line.strip()
+
+        # Check for section headers: ## [emoji] Category Name (N items)
+        if stripped.startswith("##") and not stripped.startswith("###"):
+            # Remove ## prefix and strip
+            header_text = stripped.lstrip("#").strip()
+            # Remove emoji (any non-ASCII leading chars)
+            header_clean = re.sub(r'^[^\w]*', '', header_text).strip()
+            # Remove count suffix like "(11 items)" or "(0)" or "(0 new)"
+            header_name = re.sub(r'\s*\([\d\w\s~]*\)\s*$', '', header_clean).strip().lower()
+
+            # Match to category
+            matched = False
+            for cat_key, keywords in _MD_SECTION_MAP:
+                for kw in keywords:
+                    if kw in header_name:
+                        current_category = cat_key
+                        matched = True
+                        break
+                if matched:
+                    break
+
+            if not matched:
+                current_category = None
+            continue
+
+        # Check for Stats footer: **Stats:** ~120 messages...
+        if stripped.lower().startswith("**stats"):
+            _parse_stats_line(stripped, result["stats"])
+            current_category = None
+            continue
+
+        # Check for horizontal rule (section separator)
+        if stripped == "---":
+            current_category = None
+            continue
+
+        # If we're in a category, collect bullet items
+        if current_category is not None and stripped.startswith("- "):
+            # Skip sub-bullets (indented)
+            if line.startswith("  ") and not line.startswith("- "):
+                continue
+
+            item_text = stripped[2:].strip()  # Remove "- " prefix
+
+            # Skip placeholder lines
+            if any(p in item_text.lower() for p in _PLACEHOLDER_PATTERNS):
+                continue
+
+            # Skip empty items
+            if not item_text:
+                continue
+
+            result[current_category].append(item_text)
+
+    # If no stats line found, compute from actual items
+    if result["stats"]["items_extracted"] == 0:
+        total = sum(len(result[cat]) for cat in [
+            "facts", "feedback_lessons", "rules_incidents", "compliments",
+            "decisions", "action_items", "ideas", "technical_learnings",
+        ])
+        result["stats"]["items_extracted"] = total
+
+    return result
+
+
+def _parse_stats_line(line: str, stats: dict) -> None:
+    """Parse the Stats footer line for message count and items extracted.
+
+    Examples:
+        "**Stats:** ~120 messages across 5 sessions. 22 items extracted."
+        "**Stats:** 85 messages processed from 3 sessions. 15 items extracted."
+        "**Stats:** 5 messages, 1 item."
+    """
+    # Extract message count: look for number before "message"
+    msg_match = re.search(r'~?(\d+)\s+message', line.lower())
+    if msg_match:
+        stats["messages_processed"] = int(msg_match.group(1))
+
+    # Extract session count: look for number before "session"
+    sess_match = re.search(r'(\d+)\s+session', line.lower())
+    if sess_match:
+        stats["sessions_scanned"] = int(sess_match.group(1))
+
+    # Extract items count: look for number before "item"
+    items_match = re.search(r'(\d+)\s+item', line.lower())
+    if items_match:
+        stats["items_extracted"] = int(items_match.group(1))
+
+
 def parse_reflection_response(text: str) -> dict:
     """Parse agent's JSON response into structured categories.
 
@@ -367,13 +517,20 @@ def format_reflection_telegram(parsed: dict, date_str: str) -> str:
 
 
 def _extract_item_text(item: dict | str, category_label: str) -> str:
-    """Extract displayable text from an item dict/string. Max 120 chars."""
+    """Extract displayable text from an item dict/string. Max 120 chars.
+
+    Handles both:
+    - str items (from parse_reflection_markdown — primary path)
+    - dict items (from parse_reflection_response JSON — legacy fallback)
+    """
     if isinstance(item, str):
-        return item[:120]
+        # Strip leading markdown bold markers for cleaner display
+        text = re.sub(r'^\*\*([^*]+)\*\*', r'\1', item)
+        return text[:120]
     if not isinstance(item, dict):
         return str(item)[:120]
 
-    # Extract text based on category
+    # Dict items from JSON parsing (legacy fallback)
     if "Facts" in category_label:
         cat = item.get("category", "")
         text = item.get("text", "")
@@ -611,9 +768,22 @@ def run_reflection(conversations_text: str, date_str: str) -> tuple[str | None, 
         else:
             report = "# 🪞 Nightly Reflection\n\n" + response.strip()
 
-        # Try to parse JSON for Telegram summary (best-effort, not required)
-        parsed = parse_reflection_response(response)
-        logger.info("Reflection complete: %d chars report" % len(report))
+        # Parse response for Telegram summary.
+        # Primary: markdown parsing (agent always returns markdown).
+        # Fallback: JSON parsing (legacy, unlikely to match).
+        parsed = parse_reflection_markdown(response)
+        if parsed["stats"]["items_extracted"] == 0 and any(parsed[c] for c in _CATEGORIES):
+            # Items found but stats line missing — recount
+            parsed["stats"]["items_extracted"] = sum(
+                len(parsed[c]) for c in _CATEGORIES
+            )
+        if not any(parsed[c] for c in _CATEGORIES):
+            # Markdown parsing found nothing — try JSON as fallback
+            parsed = parse_reflection_response(response)
+            if any(parsed[c] for c in _CATEGORIES):
+                logger.info("Parsed reflection via JSON fallback")
+        logger.info("Reflection complete: %d chars report, %d items parsed" % (
+            len(report), parsed["stats"].get("items_extracted", 0)))
 
         # Capture workspace state AFTER agent ran
         post_hash = _git_head_hash()

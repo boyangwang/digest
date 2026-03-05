@@ -552,12 +552,16 @@ async def cmd_sleep(update, context):
             mock_parsed = _test_recorder.append_reflection()
             logger.info("Test reflection appended.")
             
-            # T4: Send mock reflection summary message
-            from reflection import format_reflection_telegram
+            # Send mock reflection summary verbatim
             now = datetime.now(SGT)
             date_str = now.strftime("%Y-%m-%d")
-            summary_msg = format_reflection_telegram(mock_parsed, date_str)
-            await update.message.reply_text(summary_msg)
+            mock_summary = (
+                "🪞 Nightly Reflection — %s (test mode)\n\n"
+                "📌 Facts: 1 item\n"
+                "🔧 Feedback: 1 item\n"
+                "📊 Stats: 5 messages, 8 items extracted\n"
+            ) % date_str
+            await update.message.reply_text(mock_summary)
             logger.info("Test reflection summary sent.")
             
         success = _test_recorder.finalize()
@@ -604,11 +608,10 @@ async def cmd_sleep(update, context):
                         append_reflection(report)
                         logger.info("Reflection appended to digest.")
                         
-                        # T3: Send structured reflection summary to user
-                        from reflection import format_reflection_telegram
-                        summary_msg = format_reflection_telegram(parsed, date_str)
+                        # Send agent's reflection report verbatim to Telegram
+                        summary_msg = report[:4090] + "..." if len(report) > 4096 else report
                         await update.message.reply_text(summary_msg)
-                        logger.info("Reflection summary sent to user.")
+                        logger.info("Reflection report sent to user (%d chars)." % len(summary_msg))
                     else:
                         logger.warning("Reflection returned no report.")
                     # Collect diff images for sending after finalize
@@ -810,7 +813,7 @@ async def cmd_reflect(update, context):
 
         # Run reflection
         formatted = format_messages(all_msgs)
-        from reflection import run_reflection, format_reflection_telegram
+        from reflection import run_reflection
         now = datetime.now(SGT)
         date_str = target_file.stem.split("-")[0] + "-" + target_file.stem.split("-")[1] + "-" + target_file.stem.split("-")[2]  # Extract YYYY-MM-DD
         report, diff_info, parsed = run_reflection(formatted, date_str)
@@ -819,10 +822,10 @@ async def cmd_reflect(update, context):
             await update.message.reply_text("⚠️ Reflection failed — no report generated")
             return
 
-        # Send preview message
-        summary_msg = format_reflection_telegram(parsed, date_str)
+        # Send agent's reflection report verbatim as preview
+        summary_msg = report[:4090] + "..." if len(report) > 4096 else report
         await update.message.reply_text(summary_msg)
-        logger.info("Sent /reflect preview to user")
+        logger.info("Sent /reflect preview to user (%d chars)" % len(summary_msg))
 
         # Attach inline button: "Accept & Save"
         keyboard = [[InlineKeyboardButton("✅ Accept & Save", callback_data=f"reflect_accept:{target_file.name}")]]
