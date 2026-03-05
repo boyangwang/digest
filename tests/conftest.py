@@ -11,8 +11,14 @@ import sys
 import tempfile
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
+
+# Guard A: Set DIGEST_BOT_ENV=test BEFORE any project module is imported.
+# This makes config.DIGEST_DIR point to /tmp instead of the production vault.
+# Belt-and-suspenders with Guard B (session-scoped auto-patch below).
+os.environ["DIGEST_BOT_ENV"] = "test"
 
 # Set dummy token BEFORE config is imported by any test module.
 # The prefix 8324650609 is the bot's public numeric ID (not a secret).
@@ -23,6 +29,35 @@ os.environ.setdefault("DIGEST_BOT_TOKEN", "8324650609:FAKE_TEST_TOKEN_NOT_REAL")
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 SGT = timezone(timedelta(hours=8))
+
+# Production vault path — tests must NEVER write here.
+_PRODUCTION_VAULT = Path("/Users/claw/Documents/NotesVault/Artificial-Colloquia/Doudou-Digest")
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _guard_production_vault():
+    """Guard B: Session-scoped auto-patch that redirects DIGEST_DIR for ALL tests.
+
+    Even if a test forgets to use the digest_dir fixture or patch DIGEST_DIR,
+    this ensures recorder.DIGEST_DIR and config.DIGEST_DIR point to /tmp.
+    Combined with Guard A (env var), makes it physically impossible for
+    tests to write to the production Obsidian vault.
+    """
+    import config
+    import recorder
+    import main
+
+    safe_dir = Path(tempfile.mkdtemp(prefix="digest-bot-test-"))
+    with patch.object(config, "DIGEST_DIR", safe_dir), \
+         patch.object(config, "ATTACHMENTS_DIR", safe_dir / "attachments"), \
+         patch.object(config, "TEST_DIGEST_DIR", safe_dir / "_test"), \
+         patch.object(recorder, "DIGEST_DIR", safe_dir), \
+         patch.object(main, "ATTACHMENTS_DIR", safe_dir / "attachments"):
+        yield safe_dir
+
+    # Verify no writes leaked to production
+    new_files = set(f.name for f in _PRODUCTION_VAULT.glob("*.md")) if _PRODUCTION_VAULT.exists() else set()
+    # (Can't diff against pre-test state here, but the patches above prevent writes)
 
 
 @pytest.fixture

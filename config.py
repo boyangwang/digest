@@ -26,7 +26,17 @@ ALLOWED_USER_IDS = {BOYANG_USER_ID, TEST_USER_ID} - {0}
 
 # --- Paths ---
 VAULT_PATH = Path("/Users/claw/Documents/NotesVault")
-DIGEST_DIR = VAULT_PATH / "Artificial-Colloquia" / "Doudou-Digest"
+_PRODUCTION_DIGEST_DIR = VAULT_PATH / "Artificial-Colloquia" / "Doudou-Digest"
+
+# Guard A: In test environments, redirect DIGEST_DIR to /tmp to make it
+# physically impossible for tests to write to the production Obsidian vault.
+# The env var is set automatically by conftest.py (pytest) and can be set
+# manually for any other test harness.
+if os.environ.get("DIGEST_BOT_ENV") == "test":
+    DIGEST_DIR = Path(os.environ.get("DIGEST_BOT_TEST_DIR", "/tmp/digest-bot-test"))
+    DIGEST_DIR.mkdir(parents=True, exist_ok=True)
+else:
+    DIGEST_DIR = _PRODUCTION_DIGEST_DIR
 ATTACHMENTS_DIR = DIGEST_DIR / "attachments"
 PID_FILE = Path("/tmp/digest-bot.pid")
 

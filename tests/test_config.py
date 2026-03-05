@@ -36,7 +36,16 @@ class TestPaths:
         assert config.VAULT_PATH.is_absolute()
 
     def test_digest_dir_under_vault(self):
-        assert str(config.DIGEST_DIR).startswith(str(config.VAULT_PATH))
+        # In test env (DIGEST_BOT_ENV=test), DIGEST_DIR is redirected to /tmp.
+        # Verify the production path is correct; actual DIGEST_DIR may differ.
+        assert str(config._PRODUCTION_DIGEST_DIR).startswith(str(config.VAULT_PATH))
+
+    def test_digest_dir_test_guard(self):
+        """Guard A: when DIGEST_BOT_ENV=test, DIGEST_DIR is NOT the production vault."""
+        import os
+        if os.environ.get("DIGEST_BOT_ENV") == "test":
+            assert not str(config.DIGEST_DIR).startswith(str(config.VAULT_PATH)), \
+                "DIGEST_DIR should NOT point to production vault in test env"
 
     def test_session_dir_under_openclaw(self):
         assert ".openclaw" in str(config.SESSION_DIR)

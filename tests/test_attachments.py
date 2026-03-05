@@ -46,12 +46,13 @@ class TestAppendImageRecap:
         import recorder
         from recorder import create_digest
         recorder._active_file = None
-        now = datetime.now(SGT)
-        create_digest(
-            coverage_from=now - timedelta(hours=1),
-            coverage_to=now,
-            session_summaries=[{"session": "Test", "messages": 1, "summary": "Test."}],
-        )
+        with patch.object(recorder, "DIGEST_DIR", digest_dir):
+            now = datetime.now(SGT)
+            create_digest(
+                coverage_from=now - timedelta(hours=1),
+                coverage_to=now,
+                session_summaries=[{"session": "Test", "messages": 1, "summary": "Test."}],
+            )
 
     def test_basic_image_embed(self):
         from recorder import append_image_recap, get_active_file
@@ -101,12 +102,13 @@ class TestAppendFileRecap:
         import recorder
         from recorder import create_digest
         recorder._active_file = None
-        now = datetime.now(SGT)
-        create_digest(
-            coverage_from=now - timedelta(hours=1),
-            coverage_to=now,
-            session_summaries=[{"session": "Test", "messages": 1, "summary": "Test."}],
-        )
+        with patch.object(recorder, "DIGEST_DIR", digest_dir):
+            now = datetime.now(SGT)
+            create_digest(
+                coverage_from=now - timedelta(hours=1),
+                coverage_to=now,
+                session_summaries=[{"session": "Test", "messages": 1, "summary": "Test."}],
+            )
 
     def test_basic_file_embed(self):
         from recorder import append_file_recap, get_active_file
