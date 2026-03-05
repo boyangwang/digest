@@ -936,7 +936,15 @@ async def handle_text(update, context):
         await update.message.reply_text("✍️")
         logger.info("Recorded: %d chars." % len(text))
 
-    # Re-collect new conversations since last coverage_to
+    await _collect_and_report(trigger="text")
+
+
+async def _collect_and_report(trigger: str = "text"):
+    """Shared collection logic: fetch new conversations and report to Boyang.
+
+    Called by handle_text and handle_voice after appending recap.
+    Reads coverage_to from active digest, collects new messages, updates digest.
+    """
     status = get_active_status()
     last_coverage = status.get("coverage_to")
     if not last_coverage:
@@ -945,7 +953,7 @@ async def handle_text(update, context):
 
     try:
         since_ts = datetime.fromisoformat(str(last_coverage))
-        result = await _engine.collect(since_ts, trigger="text")
+        result = await _engine.collect(since_ts, trigger=trigger)
 
         if result is None:
             await _send_to_boyang("❌ Collection failed — will retry on next message")
@@ -969,7 +977,7 @@ async def handle_text(update, context):
         await _send_to_boyang("\n".join(parts))
 
     except Exception as e:
-        logger.error("Re-collect on text failed: %s" % e)
+        logger.error("Re-collect on %s failed: %s" % (trigger, e))
         await _send_to_boyang("❌ Collection failed: %s" % e)
 
 
@@ -1019,6 +1027,9 @@ async def handle_voice(update, context):
         else:
             reply = "🎙️ ✍️ (audio saved, transcription unavailable)"
         await update.message.reply_text(reply)
+
+        # 6. Trigger collection (same as handle_text — SPEC-VOICE-06b)
+        await _collect_and_report(trigger="voice")
 
     except Exception as e:
         logger.error("Voice handling error: %s" % e)
