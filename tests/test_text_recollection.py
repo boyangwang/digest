@@ -109,28 +109,52 @@ class TestRecollectionRuns:
             config.SESSION_DIR = orig_sd
             config.SESSIONS_JSON = orig_sj
 
-    def test_build_session_summaries_returns_nonzero(self, mock_sessions):
-        """_build_session_summaries must return messages when they exist."""
-        sessions_dir, sessions_json = mock_sessions
+    @pytest.mark.asyncio
+    async def test_build_session_summaries_returns_nonzero(self, mock_sessions, active_digest):
+        """_engine.collect() must be called and return results when handle_text runs."""
+        digest_dir, filepath = active_digest
 
         import config
-        orig_sd, orig_sj = config.SESSION_DIR, config.SESSIONS_JSON
-        config.SESSION_DIR = sessions_dir
-        config.SESSIONS_JSON = sessions_json
+        import recorder
+        import main as main_mod
+
+        orig_dd = config.DIGEST_DIR
+        config.DIGEST_DIR = digest_dir
+        recorder._active_file = filepath
+
+        mock_result = MagicMock()
+        mock_result.total = 15
+        mock_result.coverage_to = datetime(2026, 3, 1, 21, 0, 0, tzinfo=SGT)
+        mock_result.summaries = [{"session": "CLAW 003", "messages": 15, "summary": "Test session summary"}]
+
+        mock_message = AsyncMock()
+        mock_message.text = "Test message"
+        mock_message.reply_text = AsyncMock()
+        mock_update = MagicMock()
+        mock_update.message = mock_message
+        mock_message.from_user = MagicMock()
+        mock_message.from_user.id = 411364623
+        mock_message.from_user.username = "b0yan913"
+        mock_message.from_user.first_name = "Boyang"
+        mock_context = MagicMock()
+        main_mod._app = MagicMock()
+        main_mod._app.bot = AsyncMock()
 
         try:
-            from main import _build_session_summaries
-            since_ts = datetime(2026, 3, 1, 19, 30, 0, tzinfo=SGT)
-
-            with patch("main.compose_summary", return_value="Test summary"):
-                summaries, total = _build_session_summaries(since_ts)
-                assert total > 0, (
-                    "_build_session_summaries returned 0. Messages exist but aren't found."
+            with patch.object(main_mod._engine, "collect", new_callable=AsyncMock, return_value=mock_result) as mock_collect:
+                await main_mod.handle_text(mock_update, mock_context)
+                assert mock_collect.called, (
+                    "_engine.collect() was not called. "
+                    "Re-collection must run after text message."
                 )
-                assert len(summaries) > 0, "No session summaries generated"
+            assert mock_result.total > 0, (
+                "_engine.collect() returned 0. Messages exist but aren't found."
+            )
+            assert len(mock_result.summaries) > 0, "No session summaries generated"
         finally:
-            config.SESSION_DIR = orig_sd
-            config.SESSIONS_JSON = orig_sj
+            config.DIGEST_DIR = orig_dd
+            recorder._active_file = None
+            main_mod._app = None
 
 
 # ============================================================
@@ -299,7 +323,12 @@ class TestRecollectionStatusMessage:
             main_mod._app.bot = mock_bot
 
             summary_text = "Evening conversation about the voice feature and ElevenLabs setup"
-            with patch("main.compose_summary", return_value=summary_text):
+            mock_result = MagicMock()
+            mock_result.total = 1
+            mock_result.coverage_to = datetime(2026, 3, 1, 21, 0, 0, tzinfo=SGT)
+            mock_result.summaries = [{"session": "CLAW 003", "messages": 5, "summary": summary_text}]
+
+            with patch.object(main_mod._engine, "collect", new_callable=AsyncMock, return_value=mock_result):
                 await main_mod.handle_text(mock_update, mock_context)
 
             # Collect all text sent via _send_to_boyang
@@ -432,7 +461,7 @@ class TestNoSilentFailure:
             main_mod._app.bot = mock_bot
 
             # Make collection crash
-            with patch("main._build_session_summaries", side_effect=Exception("DB error")):
+            with patch.object(main_mod._engine, "collect", new_callable=AsyncMock, side_effect=Exception("DB error")):
                 await main_mod.handle_text(mock_update, mock_context)
 
             # Must have sent an error notification
@@ -481,7 +510,9 @@ class TestNoSilentFailure:
             main_mod._app = MagicMock()
             main_mod._app.bot = mock_bot
 
-            with patch("main._build_session_summaries", return_value=([], 0)):
+            mock_result = MagicMock()
+            mock_result.total = 0
+            with patch.object(main_mod._engine, "collect", new_callable=AsyncMock, return_value=mock_result):
                 await main_mod.handle_text(mock_update, mock_context)
 
             # Even with 0 messages, must confirm collection ran
@@ -552,7 +583,12 @@ class TestReproduceProductionBug:
             main_mod._app = MagicMock()
             main_mod._app.bot = mock_bot
 
-            with patch("main.compose_summary", return_value="Evening walk summary"):
+            mock_result = MagicMock()
+            mock_result.total = 5
+            mock_result.coverage_to = datetime(2026, 3, 1, 21, 0, 0, tzinfo=SGT)
+            mock_result.summaries = [{"session": "CLAW 003", "messages": 5, "summary": "Evening walk summary"}]
+
+            with patch.object(main_mod._engine, "collect", new_callable=AsyncMock, return_value=mock_result):
                 await main_mod.handle_text(mock_update, mock_context)
 
             # Verify: recap was appended
