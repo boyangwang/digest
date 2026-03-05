@@ -10,7 +10,7 @@ Pure timing logic. No LLM. No file I/O (delegates to recorder/collector).
 """
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -43,9 +43,22 @@ class DigestScheduler:
         self._on_nudge_callback = on_nudge
 
     def _reset_if_new_day(self):
-        """Reset state at day boundary."""
-        today = datetime.now(SGT).strftime("%Y-%m-%d")
+        """Reset state at day boundary, but not during post-midnight nudge window (00:00-07:00).
+
+        The nudge window spans 22:30-07:00 across midnight. When the date rolls over
+        at 00:00, we must NOT reset if it's a same-evening midnight crossover (yesterday
+        → today while hour < 07:00). Only skip when the date changed by exactly one day.
+        """
+        now = datetime.now(SGT)
+        today = now.strftime("%Y-%m-%d")
         if today != self._today:
+            # Suppress reset during post-midnight window for same-evening crossover only.
+            # e.g. _today="2026-03-05", now=2026-03-06 00:30 → skip (nudge still active).
+            # But _today="2026-02-28", now=2026-03-06 01:44 → reset (stale state).
+            if now.hour < NUDGE_END_HOUR and self._today:
+                yesterday = (now - timedelta(days=1)).strftime("%Y-%m-%d")
+                if self._today == yesterday:
+                    return
             self._today = today
             self._sleep_received = False
             self._digest_generated = False
