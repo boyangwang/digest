@@ -511,7 +511,7 @@ async def generate_digest():
 async def do_nudge():
     """Send a nudge. Called by scheduler."""
     now = datetime.now(SGT)
-    nudge_text = compose_nudge("It's %s SGT." % now.strftime("%H:%M"))
+    nudge_text = compose_nudge("It's %s SGT, %s." % (now.strftime("%H:%M"), now.strftime("%A")))
     await _send_to_boyang(nudge_text)
     logger.info("Nudge sent.")
 
