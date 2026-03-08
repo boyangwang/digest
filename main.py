@@ -519,6 +519,16 @@ async def do_nudge():
     logger.info("Nudge sent.")
 
 
+async def do_reminder():
+    """Send 22:30 reminder to run /digest. Static message — no LLM call."""
+    msg = (
+        "📝 Ready for tonight's digest? Send /digest when you're ready.\n"
+        "📝 今晚的摘要准备好了吗？准备好了就发 /digest 吧。"
+    )
+    await _send_to_boyang(msg)
+    logger.info("Digest reminder sent.")
+
+
 # ============================================================
 # Command handlers
 # ============================================================
@@ -1180,7 +1190,7 @@ async def post_init(application):
         _scheduler.mark_digest_generated()
         logger.info("Recovered active digest: %s" % recovered.name)
 
-    _scheduler.set_callbacks(on_digest=generate_digest, on_nudge=do_nudge)
+    _scheduler.set_callbacks(on_digest=generate_digest, on_nudge=do_nudge, on_reminder=do_reminder)
     _scheduler.start()
     logger.info("Bot initialized. Scheduler started.")
 

@@ -1,12 +1,13 @@
 """
-Scheduler — APScheduler-based timing for digest generation and nudging.
+Scheduler — APScheduler-based timing for digest reminders and nudging.
 
 Manages:
-  - 22:30 SGT: trigger digest generation
-  - Every 30 min after 22:30 until /sleep or 07:00: nudge cycle
-  - State: has /sleep been received, has digest been generated
+  - 22:30 SGT: send reminder to run /digest (no digest generation)
+  - Every 30 min after 22:30 until /sleep or 07:00: nudge cycle (only if /digest was sent)
+  - State: has /sleep been received, has digest been generated (via /digest command)
 
-Pure state machine. No date logic. The digest job is the only reset point.
+Pure state machine. No date logic. Digest must be explicitly triggered via /digest command.
+The 22:30 job resets _sleep_received for the new day cycle but does NOT set _digest_generated.
 """
 
 import logging
@@ -35,19 +36,20 @@ class DigestScheduler:
         self._digest_generated = False
         self._on_digest_callback = None
         self._on_nudge_callback = None
+        self._on_reminder_callback = None
 
-    def set_callbacks(self, on_digest, on_nudge):
-        """Set async callbacks for digest generation and nudging."""
+    def set_callbacks(self, on_digest, on_nudge, on_reminder):
+        """Set async callbacks for digest generation, nudging, and the 22:30 reminder."""
         self._on_digest_callback = on_digest
         self._on_nudge_callback = on_nudge
+        self._on_reminder_callback = on_reminder
 
     async def _digest_job(self):
-        """Triggered at 22:30 SGT. Always starts a new cycle."""
-        logger.info("Digest job triggered. Starting new cycle.")
+        """Triggered at 22:30 SGT. Sends reminder to run /digest. Resets sleep for new day."""
+        logger.info("22:30 reminder job triggered. Resetting sleep state for new cycle.")
         self._sleep_received = False
-        self._digest_generated = True
-        if self._on_digest_callback:
-            await self._on_digest_callback()
+        if self._on_reminder_callback:
+            await self._on_reminder_callback()
 
     async def _nudge_job(self):
         """Triggered every 30 min during nudge window. Read-only on state."""
@@ -126,5 +128,10 @@ class DigestScheduler:
         self.scheduler.shutdown(wait=False)
 
     async def trigger_digest_now(self):
-        """Manually trigger digest generation (for testing)."""
+        """Manually trigger the 22:30 reminder job (for testing)."""
         await self._digest_job()
+
+    async def trigger_generate_now(self):
+        """Manually trigger digest generation, simulating /digest (for testing)."""
+        if self._on_digest_callback:
+            await self._on_digest_callback()

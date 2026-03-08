@@ -2,10 +2,11 @@
 Tests for scheduler.py — Timing logic and state management.
 
 Tests cover:
-- Digest job as the only state reset point
+- 22:30 job sends reminder only (no digest generation, no _digest_generated)
 - Nudge window enforcement
 - Sleep stops nudging
 - State transitions
+- trigger_generate_now() for tests that need to simulate /digest
 """
 
 import sys
@@ -50,17 +51,17 @@ class TestSchedulerState:
 class TestDigestCycleReset:
 
     @pytest.mark.asyncio
-    async def test_digest_job_resets_cycle(self):
-        """digest_job clears sleep_received and sets digest_generated."""
+    async def test_digest_job_resets_sleep_received_only(self):
+        """digest_job (22:30 reminder) clears sleep_received but does NOT set digest_generated."""
         s = DigestScheduler()
-        s._on_digest_callback = AsyncMock()
+        s._on_reminder_callback = AsyncMock()
         s._sleep_received = True
         s._digest_generated = False
 
         await s._digest_job()
 
         assert s._sleep_received is False
-        assert s._digest_generated is True
+        assert s._digest_generated is False  # reminder does NOT enable nudging
 
     @pytest.mark.asyncio
     async def test_nudge_job_does_not_reset_state(self):
@@ -86,27 +87,86 @@ class TestDigestCycleReset:
 class TestDigestJob:
 
     @pytest.mark.asyncio
-    async def test_digest_calls_callback(self):
+    async def test_digest_job_calls_reminder_callback(self):
+        """22:30 cron job calls reminder callback, NOT digest callback."""
         s = DigestScheduler()
-        mock_cb = AsyncMock()
-        s._on_digest_callback = mock_cb
+        reminder_cb = AsyncMock()
+        digest_cb = AsyncMock()
+        s._on_reminder_callback = reminder_cb
+        s._on_digest_callback = digest_cb
 
         await s._digest_job()
 
-        mock_cb.assert_called_once()
-        assert s._digest_generated
+        reminder_cb.assert_called_once()
+        digest_cb.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_digest_always_runs_no_guard(self):
-        """digest_job always calls callback — no 'already generated' guard."""
+    async def test_digest_job_does_not_set_digest_generated(self):
+        """22:30 reminder does NOT set _digest_generated."""
         s = DigestScheduler()
-        mock_cb = AsyncMock()
-        s._on_digest_callback = mock_cb
-        s._digest_generated = True  # Already True from last cycle
+        s._on_reminder_callback = AsyncMock()
+        s._digest_generated = False
 
         await s._digest_job()
 
-        mock_cb.assert_called_once()
+        assert s._digest_generated is False
+
+    @pytest.mark.asyncio
+    async def test_digest_job_always_sends_reminder(self):
+        """22:30 job always sends reminder — no guard on prior state."""
+        s = DigestScheduler()
+        reminder_cb = AsyncMock()
+        s._on_reminder_callback = reminder_cb
+        s._digest_generated = True  # Already True from previous /digest
+
+        await s._digest_job()
+
+        reminder_cb.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_trigger_generate_now_calls_digest_callback(self):
+        """trigger_generate_now() simulates /digest — calls digest callback."""
+        s = DigestScheduler()
+        digest_cb = AsyncMock()
+        s._on_digest_callback = digest_cb
+
+        await s.trigger_generate_now()
+
+        digest_cb.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_nudge_skips_after_22_30_without_digest_command(self):
+        """22:30 reminder alone does NOT enable nudging."""
+        s = DigestScheduler()
+        nudge_cb = AsyncMock()
+        s._on_nudge_callback = nudge_cb
+        s._on_reminder_callback = AsyncMock()
+
+        # 22:30 fires — only reminder
+        await s._digest_job()
+
+        # Nudge fires at 23:00 — should skip because /digest was never sent
+        with patch("scheduler.datetime") as mock_dt:
+            mock_dt.now.return_value = datetime(2026, 3, 9, 23, 0, tzinfo=SGT)
+            mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+            await s._nudge_job()
+
+        nudge_cb.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_nudge_enabled_after_mark_digest_generated(self):
+        """After mark_digest_generated() (called by /digest), nudging works."""
+        s = DigestScheduler()
+        nudge_cb = AsyncMock()
+        s._on_nudge_callback = nudge_cb
+        s.mark_digest_generated()
+
+        with patch("scheduler.datetime") as mock_dt:
+            mock_dt.now.return_value = datetime(2026, 3, 9, 23, 0, tzinfo=SGT)
+            mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+            await s._nudge_job()
+
+        nudge_cb.assert_called_once()
 
 
 # ============================================================

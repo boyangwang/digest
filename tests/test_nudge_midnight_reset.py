@@ -61,12 +61,13 @@ class TestArchitectureEnforcement:
 # ============================================================
 
 class TestDigestJobCycleStart:
-    """digest_job starts a new cycle. It is the ONLY state reset point."""
+    """digest_job (22:30) sends reminder only — /digest command enables nudging."""
 
     @pytest.mark.asyncio
-    async def test_digest_job_starts_new_cycle(self):
-        """After digest_job, digest_generated=True and sleep_received=False."""
+    async def test_digest_job_resets_sleep_and_sends_reminder(self):
+        """After digest_job, sleep_received=False and reminder sent. digest_generated stays False."""
         s = DigestScheduler()
+        s._on_reminder_callback = AsyncMock()
         s._on_digest_callback = AsyncMock()
         s._on_nudge_callback = AsyncMock()
 
@@ -75,15 +76,16 @@ class TestDigestJobCycleStart:
             mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
             await s._digest_job()
 
-        assert s._digest_generated is True
+        assert s._digest_generated is False  # reminder does NOT enable nudging
         assert s._sleep_received is False
-        s._on_digest_callback.assert_called_once()
+        s._on_reminder_callback.assert_called_once()
+        s._on_digest_callback.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_digest_job_resets_sleep_from_previous_cycle(self):
-        """New digest clears sleep_received from last night's /sleep."""
+        """22:30 reminder clears sleep_received from last night's /sleep."""
         s = DigestScheduler()
-        s._on_digest_callback = AsyncMock()
+        s._on_reminder_callback = AsyncMock()
         # Simulate: last night's /sleep was received
         s._sleep_received = True
         s._digest_generated = False
@@ -97,18 +99,14 @@ class TestDigestJobCycleStart:
             "digest_job must clear sleep_received from previous cycle. "
             "The new cycle starts fresh."
         )
-        assert s._digest_generated is True
+        assert s._digest_generated is False  # still False until /digest sent
 
     @pytest.mark.asyncio
-    async def test_digest_job_always_runs_no_guard(self):
-        """digest_job must run even if digest_generated=True from previous cycle.
-        
-        Without date-based reset, a stale _digest_generated=True from last night
-        must NOT block tonight's digest. The digest job always starts a new cycle.
-        """
+    async def test_digest_job_always_sends_reminder(self):
+        """22:30 reminder always fires — no guard should block it."""
         s = DigestScheduler()
-        s._on_digest_callback = AsyncMock()
-        # Simulate: digest_generated still True from last night (no date reset!)
+        s._on_reminder_callback = AsyncMock()
+        # Simulate: digest_generated still True from last night's /digest
         s._digest_generated = True
         s._sleep_received = True
 
@@ -117,9 +115,8 @@ class TestDigestJobCycleStart:
             mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
             await s._digest_job()
 
-        s._on_digest_callback.assert_called_once(), (
-            "digest_job must ALWAYS call the callback — no guard should block it. "
-            "APScheduler fires once daily; the callback handles idempotency."
+        s._on_reminder_callback.assert_called_once(), (
+            "digest_job must ALWAYS send reminder — no guard should block it."
         )
         assert s._sleep_received is False, "New cycle must clear sleep"
 
@@ -333,23 +330,34 @@ class TestCycleIsolation:
 
     @pytest.mark.asyncio
     async def test_new_digest_clears_old_sleep(self):
-        """New digest cycle clears /sleep from previous night."""
+        """22:30 reminder clears /sleep; nudge fires only after /digest command."""
         s = DigestScheduler()
-        s._on_digest_callback = AsyncMock()
+        s._on_reminder_callback = AsyncMock()
         s._on_nudge_callback = AsyncMock()
         s._sleep_received = True  # Last night's /sleep
 
-        # New digest at 22:30
+        # 22:30 reminder fires — clears sleep but does NOT enable nudging
         with patch("scheduler.datetime") as mock_dt:
             mock_dt.now.return_value = datetime(2026, 3, 6, 22, 30, tzinfo=SGT)
             mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
             await s._digest_job()
 
-        assert s._sleep_received is False, "New digest must clear old /sleep"
+        assert s._sleep_received is False, "22:30 reminder must clear old /sleep"
 
-        # Nudge at 23:00 should now fire
+        # Nudge at 23:00 — should NOT fire yet (no /digest sent)
         with patch("scheduler.datetime") as mock_dt:
             mock_dt.now.return_value = datetime(2026, 3, 6, 23, 0, tzinfo=SGT)
+            mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+            await s._nudge_job()
+
+        s._on_nudge_callback.assert_not_called()
+
+        # User sends /digest → mark_digest_generated()
+        s.mark_digest_generated()
+
+        # Nudge at 23:30 — should now fire
+        with patch("scheduler.datetime") as mock_dt:
+            mock_dt.now.return_value = datetime(2026, 3, 6, 23, 30, tzinfo=SGT)
             mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
             await s._nudge_job()
 
