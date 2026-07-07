@@ -187,3 +187,23 @@ I'm curious - where did you get the API keys for UAT?
 ```text
 Does obsidian login and sync work as expected? on mac mini I logged in a long time ago. Not sure if it's still connected
 ```
+
+## [10] 2026-07-07 14:46:01Z
+
+```text
+See the screenshot
+
+1. the serial number should be in all messages. the ACK as well as next message. Why is it missing from the voice one (#3)? And change text from "✓ 收到 · got it" to "✓ ACK #123"
+2. That ok button is off. It shouldn't be a standalone message, and it will be hard to find that button after I send many messages. So just attach that button to every ACK message.
+3. I have seen the compiled doc:
+
+20260707-2232
+我今天把digest bot重新做成了用来写digest的. daily方面的丢掉了. 真厉害, almost one shotted. claude code opus4.8 ultracode
+
+This timestamp format for entries is BAD. follow many other IMs for best practice. I CLEARLY SAID:
+
+1. month day hour minute
+2. Same line as content, how can it ever be newline
+
+1. why inside frontmatter there's another longer copy of the title? is it because the length of title is too long? where's the restriction (OS? Obsidian?) coming from and what is the max length for title?
+```
