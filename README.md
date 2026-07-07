@@ -1,117 +1,52 @@
-# Sleep Digest Bot 🌙
+# Digest 🌱 (v1.2)
 
-Standalone Telegram bot that collects OpenClaw conversation transcripts nightly,
-generates intelligent summaries via Doudou (OpenClaw AI agent), and writes
-them to an Obsidian vault for archival.
+A Telegram bot that turns whatever you send it — text, voice, photos, files, in any
+order — into **one bilingual Markdown note** in your Obsidian vault, with an
+LLM-generated title and tags. "Dear diary", multimodal.
 
-**AI agents: read [`AGENTS.md`](AGENTS.md) first.**
+> **JavaScript (Node ≥22).** The old Python nightly-conversation-digest app is preserved on
+> branch `archive/python-v1`. See [`specs/prd-digest-v1.2.md`](specs/prd-digest-v1.2.md).
 
----
+## How it works
 
-## Commands
+1. Send anything — the bot auto-starts a digest (no `/start`). Each input gets **two
+   replies**: an instant ACK (after it's durably saved) and a "processed" message.
+2. Voice → transcribed (ElevenLabs Scribe v2) with the **original audio kept** and embedded.
+   Photos/files → saved as attachments and embedded. Text → kept verbatim. **Exact order
+   preserved.**
+3. Tap **✅ Done** or send `/done` → the bot compiles everything into one note:
+   - **Title** = `YYYYMMDD-HHMM` (deterministic) + a longer, summarizing bilingual title in
+     your voice (`glm-5.2`), sanitized by code.
+   - **Properties** = dynamic bilingual tags (`glm-5.2`) + `CREATEDAT` + full `TITLE标题`.
+   - Images are captioned by `glm-5v-turbo` so the title/tags reflect them.
 
-| Command | Description |
-|---------|-------------|
-| `/digest` | Start or update nightly digest |
-| `/sleep` | Run reflection, finalize, goodnight |
-| `/status` | Check current state |
-| `/reflect` | Re-run reflection on latest digest |
+## Architecture (`src/`)
 
-## Architecture
+| file | role |
+|---|---|
+| `index.js` | entry — long polling |
+| `bot.js` | grammY handlers; `/done` + inline button; per-chat serial queue |
+| `ingest.js` | one input: persist → ACK → process (STT/vision) → processed |
+| `store.js` | pending digest on disk (ordered, atomic, crash-safe) |
+| `finalize.js` | `/done`: assemble → title/tags → move attachments → compile → write |
+| `compile.js` | ordered blocks + metadata → final markdown + filename (pure) |
+| `util.js` | SGT timestamps, filename sanitize + byte-cap (pure) |
+| `stt.js` | ElevenLabs Scribe v2 |
+| `llm.js` | TokenHub `glm-5.2` (title+tags) + `glm-5v-turbo` (vision) |
+| `config.js` | paths, models, keys |
+| `prompts/title-and-tags.md` | the reusable title/tags prompt (the app's voice) |
 
-→ Full details: [`docs/architecture/overview.md`](docs/architecture/overview.md)
-
-```
-Telegram → main.py → collector.py → collection_engine.py (parallel)
-                                         ↓
-                                    llm.py → openclaw agent (per session)
-                                         ↓
-                                    recorder.py → Obsidian vault
-                                         ↓ (/sleep)
-                                    reflection.py → workspace memory files
-```
-
-## Development
-
-### 5-Step Lifecycle (Mandatory)
-
-1. **Intake** — PRD in `specs/`, assign DIGEST-XXX ID
-2. **TDD** — Write failing tests first
-3. **Implement** — Make tests green
-4. **E2E** — `python3 tests/run_e2e.py --verbose`
-5. **Deploy** — `launchctl kickstart -k gui/$(id -u)/com.digest-bot`
-
-### Quick Commands
+## Run / test / deploy
 
 ```bash
-# Unit tests (run files individually — bulk hangs on async)
-python3 -m pytest tests/test_recorder.py -v
-python3 -m pytest tests/test_reflection.py -v
-python3 -m pytest tests/test_collection_engine.py -v
-python3 -m pytest tests/test_derived_sessions.py -v
-
-# E2E (bot must be running, Telegram Desktop open)
-python3 tests/run_e2e.py --verbose
-python3 tests/run_e2e.py --test collection
-
-# Restart
-launchctl kickstart -k gui/$(id -u)/com.digest-bot
-
-# Logs
-tail -f /tmp/digest-bot.log
+npm install
+npm test                                   # unit + offline E2E
+secret-run node src/index.js               # run locally (injects vault keys)
+bash launchd/deploy.sh                      # install + start launchd service
+tail -f /tmp/digest.log                     # logs
 ```
 
-## Project Structure
-
-```
-digest-bot/
-├── AGENTS.md            # AI agent onboarding (read first)
-├── README.md            # This file
-├── TODO.md              # Work tracking (active + completed)
-├── main.py              # Bot entry, commands, state machine
-├── collector.py         # Transcript reader + message extractor
-├── collection_engine.py # Parallel, retriable collection
-├── llm.py               # LLM interface (sync + async)
-├── recorder.py          # Digest file writer (YAML + markdown)
-├── reflection.py        # Nightly reflection orchestration
-├── config.py            # Constants, paths, SGT timezone
-├── scheduler.py         # APScheduler: timed collections
-├── stt.py               # Voice transcription (Whisper)
-│
-├── specs/               # Active PRDs only
-├── docs/
-│   ├── architecture/    # System design, format spec, testing strategy
-│   └── completed/       # Archived PRDs and historical specs
-├── tests/               # Unit (test_*.py) + E2E (run_e2e.py)
-└── scripts/             # Utilities
-```
-
-## Service
-
-| Item | Value |
-|------|-------|
-| LaunchAgent | `~/Library/LaunchAgents/com.digest-bot.plist` |
-| Log | `/tmp/digest-bot.log` |
-| Git remote | `github-digest:boyangwang/digest.git` |
-| Output | `NotesVault/Artificial-Colloquia/Doudou-Digest/` |
-
-## PRD Template
-
-```markdown
-# DIGEST-XXX: <Title>
-
-> **Status:** 🔴 Draft
-> **Priority:** P1
-> **Tasks:** 0/N complete
-> **Created:** YYYY-MM-DD
-
-## Problem Statement
-## Tasks
-- [ ] **T1** — description
-## Acceptance Criteria
-## Files to Modify
-```
-
----
-
-*Test counts: 159 (134 unit/integration + 25 E2E) — 2026-03-03*
+- **Output:** `~/Documents/NotesVault/Heresy-Anthology/digest/` (Obsidian-synced);
+  attachments in `ATTACHMENTS/`.
+- **Secrets (sops vault):** `DIGEST_BOT_TOKEN`, `ELEVENLABS_API_KEY`, `TENCENT_TOKENHUB_API_KEY`.
+- **Service:** launchd `network.deardiary.digest`.
