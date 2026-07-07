@@ -4,6 +4,7 @@ import {
   stampMinute,
   stampSecond,
   createdAt,
+  stampChatTime,
   byteCap,
   sanitizeTitle,
   buildFilename,
@@ -17,6 +18,7 @@ test("SGT timestamp formats", () => {
   assert.equal(stampMinute(D), "20250905-1153");
   assert.equal(stampSecond(D), "20250905-115352");
   assert.equal(createdAt(D), "2025-09-05 11:53:52");
+  assert.equal(stampChatTime(D), "09-05 11:53"); // IM-style body timestamp
 });
 
 test("SGT crosses UTC day boundary correctly", () => {

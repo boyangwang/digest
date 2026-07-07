@@ -23,31 +23,21 @@ async function download(ctx, fileId) {
   return Buffer.from(await res.arrayBuffer());
 }
 
-/** Reply helper that never throws (a send failure must not break the queue). */
+/**
+ * Reply helper that never throws. `opts.done: true` attaches the inline Done button,
+ * so every ACK carries a tappable Done at the bottom of the chat.
+ */
 function makeReply(ctx) {
-  return async (text) => {
+  return async (text, opts = {}) => {
     try {
-      await ctx.reply(text);
+      await ctx.reply(text, opts.done ? { reply_markup: DONE_KEYBOARD } : undefined);
     } catch (e) {
       log.warn(`reply failed: ${e?.message || e}`);
     }
   };
 }
 
-// Chats already shown the Done button for the current digest (reset on finalize).
-const offeredDone = new Set();
-
-/** Show the inline Done button once per digest. Call synchronously from each handler. */
-function offerDoneOnce(ctx, chatId) {
-  if (offeredDone.has(chatId)) return;
-  offeredDone.add(chatId);
-  ctx
-    .reply("发完点这里 · tap when you're done", { reply_markup: DONE_KEYBOARD })
-    .catch(() => offeredDone.delete(chatId));
-}
-
 async function runFinalize(chatId, reply) {
-  offeredDone.delete(chatId);
   await reply("⏳ 编译中 · compiling…");
   try {
     const result = await finalizeDigest(chatId);
@@ -103,7 +93,6 @@ export function buildBot() {
     const chatId = ctx.chat.id;
     const reply = makeReply(ctx);
     enqueue(chatId, () => ingestText(chatId, ctx.message.text, reply));
-    offerDoneOnce(ctx, chatId);
   });
 
   // Voice + audio.
@@ -115,7 +104,6 @@ export function buildBot() {
       const buffer = await download(ctx, media.file_id);
       await ingestVoice(chatId, { buffer, mime: media.mime_type }, reply);
     });
-    offerDoneOnce(ctx, chatId);
   });
 
   // Photos.
@@ -128,7 +116,6 @@ export function buildBot() {
       const buffer = await download(ctx, photo.file_id);
       await ingestImage(chatId, { buffer, mime: "image/jpeg", userCaption }, reply);
     });
-    offerDoneOnce(ctx, chatId);
   });
 
   // Documents / any other file.
@@ -145,7 +132,6 @@ export function buildBot() {
         reply
       );
     });
-    offerDoneOnce(ctx, chatId);
   });
 
   bot.catch((err) => log.error(`bot error: ${err?.message || err}`));

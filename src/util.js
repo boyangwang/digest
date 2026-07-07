@@ -34,6 +34,12 @@ export function createdAt(date = new Date()) {
   return `${p.Y}-${p.M}-${p.D} ${p.h}:${p.m}:${p.s}`;
 }
 
+/** `MM-DD HH:MM` — IM-style inline timestamp for body blocks (month day hour minute). */
+export function stampChatTime(date = new Date()) {
+  const p = sgtParts(date);
+  return `${p.M}-${p.D} ${p.h}:${p.m}`;
+}
+
 const utf8 = (s) => Buffer.byteLength(s, "utf8");
 
 /**
