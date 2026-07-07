@@ -1,6 +1,6 @@
 # PRD — Digest v1.2 (multimodal capture → single Obsidian note)
 
-> **Status:** 🟡 Spec locked from Boyang's answers 2026-07-07 — awaiting final GO before code.
+> **Status:** 🟢 SHIPPED 2026-07-07 — implemented, UAT passed, deployed (`network.deardiary.digest`).
 > **Created:** 2026-07-07
 > **Big pivot:** v1.2 is a **JavaScript (Node) rewrite** — treat as an almost-new project, reusing
 > only the Telegram-bot idea. Same repo (`digest`); old Python archived to a branch.
@@ -89,5 +89,25 @@ C1 Telegram lib = **grammY** · C2 title glue = **`<zh> <en>`** · C3 `CREATEDAT
 C4 attachment naming = original-name-else-`<ts>-voice.ogg`/`-img.jpg`/`-<orig>` · C5 launchd
 **`network.deardiary.digest`** · C6 title summarizes in his voice, longer.
 
-*On GO: create `archive/python-v1`, scaffold the JS app on main, write tests, implement, verify
-end-to-end on one real multimodal digest, deploy.*
+## 9. UAT feedback resolved (2026-07-07)
+1. **Serial `#N` on every message** (ACK + processed); ACK text = **`✓ ACK #N`**.
+2. **Done button attached to every ACK** (not a standalone message — always reachable).
+3. **Body timestamps are IM-style inline**: `**MM-DD HH:MM** content` (same line; month-day-hour-minute).
+4. **`TITLE标题` property always present** (full title; consistent key for future processing) —
+   filename title portion byte-capped ≤200 (255-byte FS limit; a CJK char = 3 bytes).
+5. **Tags are LLM-chosen per digest**, never a fixed schema (bilingual `English中文`).
+
+## Final note shape
+```markdown
+---
+CREATEDAT: 2026-07-07 22:32:00
+TITLE标题: <full bilingual title>
+<LLM-chosen bilingual key>: <bilingual value>
+---
+
+**07-07 22:32** <verbatim text>
+
+**07-07 22:33** ![[Heresy-Anthology/digest/ATTACHMENTS/<voice>.ogg]]
+> <transcript>
+```
+Filename: `YYYYMMDD-HHMM <sanitized title>.md`.

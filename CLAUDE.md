@@ -1,22 +1,23 @@
 # CLAUDE.md — Digest (v1.2)
 
 ## 📍 Status + Next Steps · (updated 2026-07-07)
-- **Working on:** Digest v1.2 — JS rewrite. Multimodal Telegram capture → one bilingual Obsidian note.
-- **Status:** Implemented; 21/21 unit+offline-E2E green; all 3 live APIs probed OK (STT, glm-5v-turbo, glm-5.2). Awaiting Boyang's live Telegram UAT, then deploy.
-- **Done recently:** archived Python → `archive/python-v1`; scaffolded JS app; wrote reusable title prompt from 552 vault titles; live-probed TokenHub + ElevenLabs.
-- **Known blockers:** none. (Vision caption ~15s/image is acceptable.)
-- **Next step:** run bot for Boyang to try via Telegram → on OK, `bash launchd/deploy.sh` + verify live.
+- **Working on:** Digest v1.2 — DONE. Multimodal Telegram capture → one bilingual Obsidian note.
+- **Status:** ✅ Shipped. 22/22 tests green; all 3 live APIs verified; Boyang UAT passed ("pretty good"); deployed to launchd `network.deardiary.digest`; pushed to `origin/main`.
+- **Done recently:** JS rewrite; reusable title prompt from 552 vault titles; UAT fixes (serial# on every msg, ACK+Done button, IM inline timestamps, always-`TITLE标题`); deploy.
+- **Known blockers:** Obsidian **must stay running on the mini** for Sync to propagate notes to phone (it's a server; Sync only runs while the app is open) — offered to add a keep-alive, pending Boyang's call. Vision caption ~15s/image (acceptable).
+- **Next step:** (optional) keep-alive for Obsidian on the mini so Digest notes always sync.
 
 ### Log (newest first)
-- 2026-07-07 — v1.2 JS build: capture/queue/store/compile/finalize + grammY bot; tests green; APIs verified.
+- 2026-07-07 — v1.2 shipped: JS build, live APIs verified, UAT passed, deployed launchd + pushed main.
 
 ### Decisions (append-only)
 1. v1.2 is **JavaScript (Node ≥22)**, not Python. Old app preserved on `archive/python-v1`; main overwritten.
 2. Digest = **only user inputs** (dropped OpenClaw-conversation collection, reflection, scheduler/nudges).
 3. STT = **ElevenLabs Scribe v2** (MiniMax has no STT API). LLM = **TokenHub** `glm-5.2` (title+tags) + `glm-5v-turbo` (vision), via the `openai` npm client pointed at TokenHub (NOT openai.com).
-4. Title = deterministic `YYYYMMDD-HHMM` + LLM title, **summarizing in Boyang's voice, bilingual `<zh> <en>`**, code-sanitized + byte-capped. Full title also in `TITLE标题`.
-5. Properties = dynamic bilingual `English中文` tags + `CREATEDAT: YYYY-MM-DD HH:MM:SS`.
-6. Two Telegram replies per input; ACK is atomic-with-persistence; per-chat serial queue = linear/deterministic.
+4. Title = deterministic `YYYYMMDD-HHMM` + LLM title, **summarizing in Boyang's voice, bilingual `<zh> <en>`**, code-sanitized + byte-capped (≤200 bytes for the title portion). Full title always mirrored in `TITLE标题`.
+5. Properties = **dynamic, LLM-chosen** bilingual `English中文` tags (NOT a fixed schema) + always `CREATEDAT: YYYY-MM-DD HH:MM:SS` + always `TITLE标题`.
+6. Two Telegram replies per input, both carrying the serial `#N`; ACK = `✓ ACK #N` with the inline Done button attached; ACK is atomic-with-persistence; per-chat serial queue = linear/deterministic.
+7. Body blocks use IM-style **inline** timestamps: `**MM-DD HH:MM** content` (same line, month-day-hour-minute).
 
 ## What this is
 Telegram bot: send text/voice/photos/files in any order → tap ✅ Done / `/done` → one bilingual

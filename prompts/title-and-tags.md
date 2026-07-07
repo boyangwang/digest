@@ -57,11 +57,14 @@ weight. Lean long; cover the substance (what happened, who, the realization/poin
    a fixed schema. Both keys and values are bilingual, in the `English中文` inline form
    (e.g. key `Category分类`, value `Life生活`). Values may be lists.
 
-## Suggested tag keys (pick what fits; add your own; omit what doesn't apply)
+## Tag keys are YOURS to choose — the list below is only inspiration, NOT a fixed schema
+
+Invent whatever keys best capture THIS entry; add new ones freely; omit any that don't apply.
+Different digests should have different keys. Examples (do not treat as required):
 
 `Category分类` · `People人物` · `Places地点` · `When时间` · `Themes主题` · `Objects物品` ·
 `Mood情绪` · `Decisions决定` · `Health健康` · `Work工作` · `Ideas想法`
-(`CREATEDAT` is added by code, not you.)
+(`CREATEDAT` and `TITLE标题` are added by code, not you.)
 
 ## Output — return ONLY this JSON, nothing else
 
