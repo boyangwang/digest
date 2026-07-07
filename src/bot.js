@@ -23,16 +23,29 @@ async function download(ctx, fileId) {
   return Buffer.from(await res.arrayBuffer());
 }
 
+const esc = (s) =>
+  String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
 /**
- * Reply helper that never throws. `opts.done: true` attaches the inline Done button,
- * so every ACK carries a tappable Done at the bottom of the chat.
+ * Reply helper that never throws. `opts.done` attaches the inline Done button;
+ * `opts.html` sends as HTML (falls back to stripped plain text if parsing fails).
  */
 function makeReply(ctx) {
   return async (text, opts = {}) => {
+    const options = {};
+    if (opts.done) options.reply_markup = DONE_KEYBOARD;
+    if (opts.html) options.parse_mode = "HTML";
     try {
-      await ctx.reply(text, opts.done ? { reply_markup: DONE_KEYBOARD } : undefined);
+      await ctx.reply(text, Object.keys(options).length ? options : undefined);
     } catch (e) {
       log.warn(`reply failed: ${e?.message || e}`);
+      if (opts.html) {
+        try {
+          await ctx.reply(text.replace(/<[^>]+>/g, ""));
+        } catch {
+          /* give up quietly */
+        }
+      }
     }
   };
 }
@@ -45,7 +58,14 @@ async function runFinalize(chatId, reply) {
       await reply("（没有可编译的内容）· nothing to compile — send something first");
       return;
     }
-    await reply(`✅ 已保存 · saved: ${result.filename}\n\n${result.fullTitle}`);
+    const DIV = "━━━━━━━━━━━━━━━";
+    const msg =
+      `${DIV}\n` +
+      `✅✅  <b>已保存 · SAVED</b>  ✅✅\n` +
+      `${DIV}\n\n` +
+      `🏷  <b>${esc(result.fullTitle)}</b>\n\n` +
+      `📄  <code>${esc(result.filename)}</code>`;
+    await reply(msg, { html: true });
   } catch (e) {
     log.error(`finalize failed: ${e?.message || e}`);
     await reply("❌ 编译失败 · compile failed — your inputs are still saved, try /done again");

@@ -70,9 +70,10 @@ Backend = **Tencent TokenHub** (OpenAI Chat Completions, `TENCENT_TOKENHUB_API_K
 - **Title + tags:** `glm-5.2` (best open model; 1M ctx). Params: `thinking:{type:"enabled"}`,
   `reasoning_effort:"high"`, **`max_tokens` ≈ 100k as a generous CAP** (not a target — output scales
   to input; a one-liner gets a short title). Prompt = `prompts/title-and-tags.md`.
-- **Vision (images):** `glm-5v-turbo` on the **same** TokenHub gateway (native multimodal;
-  best-available *vision-capable* model, since the top open text model has no vision). Each image →
-  caption; captions + text + transcripts feed the `glm-5.2` title/tags call.
+- **Vision (images):** `glm-5v-turbo` on the **same** TokenHub gateway (vision-capable; verified
+  working — bilingual captions). Chosen because `glm-5.2` is text-only and this is a vision model on
+  the same gateway/key — NOT independently benchmarked as the single best VLM. Each image → caption;
+  captions + text + transcripts feed the `glm-5.2` title/tags call.
 - **No separate summary section** — the (longer, ≤240-char) title carries that weight. Note holds
   **text + attachments + title + tags** only.
 - **Everything LLM-generated is bilingual** (title both languages; tag keys+values `English中文`).
