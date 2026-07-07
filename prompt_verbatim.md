@@ -128,3 +128,30 @@ For the task of title and tags, I want to use the very best available model. But
 14
 always bilingual
 ```
+
+## [4] 2026-07-07 14:02:50Z
+
+```text
+C1 Telegram lib = grammY (modern, great file handling)? / 用 grammY？
+
+-> I don't understand. You asked me to make a decision, but you didn't give me information or other alternatives. It seems we have to use it, right? 
+
+If that's the case, what is there to be decided?
+
+C2 Title glue in filename
+<zh> <en>
+
+C3 CREATEDAT value format — 2025-09-05 11:53:52
+YES
+
+C4 Attachment naming 
+Exactly like you said
+
+C5 launchd label com.digest
+
+network.deardiary.digest -> this
+
+C6
+
+The title style should learn from my style. BUT it should be longer than mine! It should be more like a real summary. Same tone. Same word pref. But longer and summarizes
+```
