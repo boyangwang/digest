@@ -181,3 +181,9 @@ OpenAI client?? what are you talking about. Where do we need open AI? I'm worrie
 ```text
 I'm curious - where did you get the API keys for UAT?
 ```
+
+## [9] 2026-07-07 14:31:04Z
+
+```text
+Does obsidian login and sync work as expected? on mac mini I logged in a long time ago. Not sure if it's still connected
+```
