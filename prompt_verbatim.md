@@ -155,3 +155,11 @@ C6
 
 The title style should learn from my style. BUT it should be longer than mine! It should be more like a real summary. Same tone. Same word pref. But longer and summarizes
 ```
+
+## [5] 2026-07-07 14:05:15Z
+
+```text
+You must also add one more thing to your prompt:
+
+The STT could be error-prone! Don't read too much into it. Or stay neutral. If something from the STT part obviously doesn't make sense, don't dwell on it. Ignore
+```
