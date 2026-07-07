@@ -207,3 +207,12 @@ This timestamp format for entries is BAD. follow many other IMs for best practic
 
 1. why inside frontmatter there's another longer copy of the title? is it because the length of title is too long? where's the restriction (OS? Obsidian?) coming from and what is the max length for title?
 ```
+
+## [11] 2026-07-07 14:54:29Z
+
+```text
+修复： 我改成有条件——只有当标题确实太长、文件名放不下时才写这个属性；普通长度的标题就没有多余副本。安全上限约 200 字节 ≈ 66 个汉字 / ~200 个拉丁字符（为 iOS 和 Sync 稳妥留了余量）。
+
+NO. first limit to 200 bytes to be safe is ok.
+Since we might need the frontmatter key, keep it ALWAYS so that it's consistent. We might need to do future processing and it's convenient to have it always there
+```
