@@ -10,18 +10,18 @@ function fm(markdown) {
   return yamlParse(m[1]);
 }
 
-test("buildProperties: CREATEDAT first; TITLE标题 only when includeFullTitle; then tags", () => {
-  const withTitle = yamlParse(
-    buildProperties("超我 Ubermensch", [{ key: "Category分类", value: "Life生活" }], startDate, true)
+test("buildProperties: CREATEDAT + TITLE标题 always first, then dynamic bilingual tags", () => {
+  const p = yamlParse(
+    buildProperties("超我 Ubermensch", [{ key: "Category分类", value: "Life生活" }], startDate)
   );
-  assert.equal(withTitle.CREATEDAT, "2025-09-05 11:53:52");
-  assert.equal(withTitle["TITLE标题"], "超我 Ubermensch");
-  assert.equal(withTitle["Category分类"], "Life生活");
-  assert.deepEqual(Object.keys(withTitle).slice(0, 2), ["CREATEDAT", "TITLE标题"]);
+  assert.equal(p.CREATEDAT, "2025-09-05 11:53:52");
+  assert.equal(p["TITLE标题"], "超我 Ubermensch");
+  assert.equal(p["Category分类"], "Life生活");
+  assert.deepEqual(Object.keys(p).slice(0, 2), ["CREATEDAT", "TITLE标题"]);
 
-  const noTitle = yamlParse(buildProperties("短标题 Short", [], startDate, false));
-  assert.equal(noTitle["TITLE标题"], undefined);
-  assert.equal(noTitle.CREATEDAT, "2025-09-05 11:53:52");
+  // TITLE标题 is present even for short titles (consistent key for downstream processing)
+  const short = yamlParse(buildProperties("短标题 Short", [], startDate));
+  assert.equal(short["TITLE标题"], "短标题 Short");
 });
 
 test("compileNote: order preserved, IM-style inline timestamps, filename", () => {
@@ -52,9 +52,9 @@ test("compileNote: order preserved, IM-style inline timestamps, filename", () =>
   assert.match(markdown, /\*\*09-05 11:54\*\* !\[\[Heresy-Anthology\/digest\/ATTACHMENTS\/v\.ogg\]\]\n> spoken words here/);
   assert.match(markdown, /\*\*09-05 11:55\*\* !\[\[Heresy-Anthology\/digest\/ATTACHMENTS\/i\.jpg\]\]\nunder the trees/);
 
-  // short title fits → no redundant TITLE标题
+  // TITLE标题 always present (full title, even though it also fits the filename)
   const props = fm(markdown);
-  assert.equal(props["TITLE标题"], undefined);
+  assert.equal(props["TITLE标题"], "去公园的一天 A day at the park");
   assert.equal(props["Places地点"], "Park公园");
 });
 
