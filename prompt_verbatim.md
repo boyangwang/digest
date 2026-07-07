@@ -230,3 +230,13 @@ These are not fixed. I welcome LLM to come up with right key values for the dige
 
 Now document everything and wrap up things
 ```
+
+## [13] 2026-07-07 15:24:53Z
+
+```text
+Small boyang-dev/tencent-tokenhub note I could add if you want: glm-5v-turbo is the vision option on TokenHub; MiniMax is TTS-only (no STT) — both learned this session. Say the word and I'll propose the edit.
+
+The minimax note is good. But glm-5v-turbo - is it really THE best vision model? Note down accurate info only
+
+Obsidian 开机自启 -> sure
+```
