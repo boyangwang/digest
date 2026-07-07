@@ -175,3 +175,9 @@ GO
 ```text
 OpenAI client?? what are you talking about. Where do we need open AI? I'm worried so you better explain first. before continue
 ```
+
+## [8] 2026-07-07 14:30:12Z
+
+```text
+I'm curious - where did you get the API keys for UAT?
+```
