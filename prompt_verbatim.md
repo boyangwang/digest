@@ -61,3 +61,70 @@ I was told that ElevenLabs is currently the best, but MiniMax is also great. Ple
 
 Ask me clarifying and design questions. Record down my spec.
 ```
+
+## [3] 2026-07-07 13:50:46Z
+
+```text
+0
+Heresy-Anthology/digest
+
+This is the right dir to put the doc. And it will sync with obsidian sync
+
+1
+v1.2 stays Python -> MUST BE JS
+
+2
+Drop entirely: OpenClaw-conversation collection + reflection + scheduler/nudges? Digest = only my inputs. / 彻底去掉：抓 Doudou 对话 + reflection 知识提取 + 定时提醒？Digest 只处理我发的输入。 ▶ Yes, drop all three.
+
+that is entirely another service. In theory you can choose to not touch those or archive all those into a dir in the repo. It's not running. Not in use. to be revamped in the future. Treat v1.2 almost as a new project (reuse the telegram bot for sure)
+
+3
+Keep using this repo! The old files can be removed or move to another branch. You can override main branch
+
+4
+both a /done command and an inline "✅ Done / 完成" button
+
+that is correct. Everytime I send something, first ACK. and then when processing done, send another message noting the completion of current block of content. 2 msgs for each one of my msg
+If your 2 msg has not arrived, and I send more, don't worry. It's linear and deterministic. Just keeps coming
+
+5
+Yes. first ACK is atomic with persistence.
+
+6
+explicit finish only
+
+7
+Heresy-Anthology/digest
+
+8
+filename = [deterministic timestamp] + [LLM content - sanitized using code not LLM! Because must be firm]
+I don't know what is frontmatter. I only know the "markdown properties" and there you should have LLM generated key values
+
+For the title style - I want you to get all of my existing titles from my obsidian vault (not that long) and learn and come up with a prompt for LLM to use in the future. You (opus 4.8 ultracode) is writing that reusable prompt. Future titles by open source model
+
+9
+Timestamp style -> You should see my sent file! It is "20250905-1153", up to minute
+
+
+10
+dynamic LLM-chosen bilingual keys, plus deterministic CREATEDAT key
+
+11
+每条一个带 HH:MM 的块；语音＝先嵌入音频再转录引用；图片/文件＝嵌入＋可选说明
+YES. Not HH:MM but also month date! Because it might span days for one essay (albeit rare)
+
+12
+I was thinking about max allowed output token. NOT guideline. If my input is only one sentence, I don't want the LLM to output a hundred thousand tokens. But there are times when my input is a few thousand tokens, and then it could totally be the case that the LLM needs hundreds of thousands of tokens to think. 
+
+So, I want to give a very large max budget. I'm not saying every output should levitate towards that budget; instead, it should only be appropriate.
+A summary is not needed. Sometimes the title replaces the summary. As I said, the title can be a bit longer.
+There is no space for a separate summary. Text, of course, yes. Title, yes.
+And refer to the above note that we have decided that we will use bilingual text. It's easy: just everything in both English and Chinese. It can be inside the same key: Company公司: Sony索尼
+
+13
+(b) add a vision pass to caption images so title/tags reflect them
+For the task of title and tags, I want to use the very best available model. But it seems that the very best available open model does not have vision. So for vision, we have to resort to the second best: the best model available there that has vision.
+
+14
+always bilingual
+```
