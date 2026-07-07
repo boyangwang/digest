@@ -216,3 +216,17 @@ This timestamp format for entries is BAD. follow many other IMs for best practic
 NO. first limit to 200 bytes to be safe is ok.
 Since we might need the frontmatter key, keep it ALWAYS so that it's consistent. We might need to do future processing and it's convenient to have it always there
 ```
+
+## [12] 2026-07-07 14:57:51Z
+
+```text
+Pretty good.
+Remember 
+
+Category分类: Work工作
+Themes主题: 重构Refactor; Digest bot
+
+These are not fixed. I welcome LLM to come up with right key values for the digests
+
+Now document everything and wrap up things
+```
