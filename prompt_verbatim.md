@@ -240,3 +240,10 @@ The minimax note is good. But glm-5v-turbo - is it really THE best vision model?
 
 Obsidian 开机自启 -> sure
 ```
+
+## [14] 2026-07-08 01:55:51Z
+
+```text
+Weird - did you restart the machine? What is the status?
+Obsidian 已升级 -> no you attempted to run, but it got stuck at "obsidian is an app downloaded from internet" MacOS prompt. I had to click on it manually
+```
