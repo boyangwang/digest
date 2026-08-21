@@ -11,7 +11,10 @@ LLM-generated title and tags. "Dear diary", multimodal.
 
 1. Send anything — the bot auto-starts a digest (no `/start`). Each input gets **two
    replies**: an instant ACK (after it's durably saved) and a "processed" message.
-2. Voice → transcribed (ElevenLabs Scribe v2) with the **original audio kept** and embedded.
+2. Voice → transcribed with the **original audio kept** and embedded. Transcription
+   retries across two vendors (ElevenLabs Scribe v2 → OpenAI) so a transient vendor
+   failure doesn't lose the words; if it still fails, the audio is saved anyway and the
+   note carries a retryable marker (see **Recovering a failed transcript** below).
    Photos/files → saved as attachments and embedded. Text → kept verbatim. **Exact order
    preserved.**
 3. Tap **✅ Done** or send `/done` → the bot compiles everything into one note:
@@ -31,10 +34,12 @@ LLM-generated title and tags. "Dear diary", multimodal.
 | `finalize.js` | `/done`: assemble → title/tags → move attachments → compile → write |
 | `compile.js` | ordered blocks + metadata → final markdown + filename (pure) |
 | `util.js` | SGT timestamps, filename sanitize + byte-cap (pure) |
-| `stt.js` | ElevenLabs Scribe v2 |
+| `stt.js` | transcription with retry + vendor rotation (the durability layer) |
+| `stt-providers.js` | the STT vendors behind one normalized interface |
 | `llm.js` | TokenHub `glm-5.2` (title+tags) + `glm-5v-turbo` (vision) |
 | `config.js` | paths, models, keys |
 | `prompts/title-and-tags.md` | the reusable title/tags prompt (the app's voice) |
+| `scripts/retranscribe.mjs` | re-run transcription for a saved attachment and patch the note |
 
 ## Run / test / deploy
 
@@ -43,10 +48,23 @@ npm install
 npm test                                   # unit + offline E2E
 secret-run node src/index.js               # run locally (injects vault keys)
 bash launchd/deploy.sh                      # install + start launchd service
-tail -f /tmp/digest.log                     # logs
+tail -f ~/.local/share/digest/digest.log    # logs (durable — never /tmp, which macOS purges)
 ```
 
 - **Output:** `~/Documents/NotesVault/Heresy-Anthology/digest/` (Obsidian-synced);
   attachments in `ATTACHMENTS/`.
-- **Secrets (sops vault):** `DIGEST_BOT_TOKEN`, `ELEVENLABS_API_KEY`, `TENCENT_TOKENHUB_API_KEY`.
+- **Secrets (sops vault):** `DIGEST_BOT_TOKEN`, `ELEVENLABS_API_KEY`, `OPENAI_API_KEY`, `TENCENT_TOKENHUB_API_KEY`.
 - **Service:** launchd `network.deardiary.digest`.
+
+## Recovering a failed transcript
+
+The audio is always saved before transcription is attempted, so a failed transcript is
+deferred work, never lost data. When a note shows `[Transcription unavailable …]`:
+
+```bash
+secret-run npm run retranscribe -- "20260102-091100-1-voice.ogg"   # one attachment
+secret-run npm run retranscribe -- --all --dry-run                 # everything still marked
+```
+
+It runs the same retry/rotation loop the bot uses and replaces the marker in the note
+that embeds that attachment, leaving every other byte of the note alone.

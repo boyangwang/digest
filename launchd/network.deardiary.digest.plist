@@ -29,9 +29,12 @@
   <key>KeepAlive</key>
   <true/>
 
+  <!-- Durable log path: macOS purges /tmp, and launchd keeps writing to the
+       now-unlinked inode, which silently destroys the whole log history.
+       Must match LOG_PATH's default in src/config.js (DATA_DIR/digest.log). -->
   <key>StandardOutPath</key>
-  <string>/tmp/digest.log</string>
+  <string>/Users/claw/.local/share/digest/digest.log</string>
   <key>StandardErrorPath</key>
-  <string>/tmp/digest.log</string>
+  <string>/Users/claw/.local/share/digest/digest.log</string>
 </dict>
 </plist>

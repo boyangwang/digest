@@ -1,9 +1,12 @@
 // Minimal logger → stdout + a log file (append). Never throws.
-import { createWriteStream } from "node:fs";
+import { createWriteStream, mkdirSync } from "node:fs";
+import { dirname } from "node:path";
 import { LOG_PATH } from "./config.js";
 
 let stream = null;
 try {
+  // LOG_PATH lives under DATA_DIR by default, which may not exist on a fresh box.
+  mkdirSync(dirname(LOG_PATH), { recursive: true });
   stream = createWriteStream(LOG_PATH, { flags: "a" });
   stream.on("error", () => { stream = null; });
 } catch {

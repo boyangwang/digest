@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { parse as yamlParse } from "yaml";
-import { compileNote, buildProperties } from "../src/compile.js";
+import { compileNote, buildProperties, transcriptFailureMarker } from "../src/compile.js";
 
 const startDate = new Date("2025-09-05T03:53:52Z"); // 11:53:52 SGT
 
@@ -73,7 +73,7 @@ test("compileNote: long title → filename truncated + TITLE标题 holds full ti
   assert.equal(props["TITLE标题"], `${longZh} Long`);
 });
 
-test("compileNote: missing transcript → unavailable marker", () => {
+test("compileNote: missing transcript → unavailable marker that says how to recover", () => {
   const { markdown } = compileNote({
     blocks: [{ seq: 0, ts: "2025-09-05T03:53:00Z", type: "voice", attachment: "a.ogg" }],
     title: { zh: "x", en: "y" },
@@ -81,4 +81,18 @@ test("compileNote: missing transcript → unavailable marker", () => {
     startDate,
   });
   assert.match(markdown, /> \[Transcription unavailable\]/);
+  // the audio is embedded and the marker carries the retry, so the words are never
+  // silently final — the note itself tells you how to get them back
+  assert.match(markdown, /!\[\[Heresy-Anthology\/digest\/ATTACHMENTS\/a\.ogg\]\]/);
+  assert.match(markdown, /audio saved; retry: npm run retranscribe -- "a\.ogg"/);
+});
+
+test("transcriptFailureMarker: records why it failed and how many attempts it took", () => {
+  const m = transcriptFailureMarker({
+    attachment: "20260102-091100-1-voice.ogg",
+    sttFailure: { reason: "exhausted", attempts: 6, providers: ["elevenlabs", "openai"] },
+  });
+  assert.match(m, /\[Transcription unavailable \(exhausted, 6 attempts\)\]/);
+  assert.match(m, /retranscribe -- "20260102-091100-1-voice\.ogg"/);
+  assert.equal(transcriptFailureMarker({ attachment: "a.ogg", sttFailure: { reason: "empty", attempts: 1 } }).includes("1 attempt)"), true);
 });

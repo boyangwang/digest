@@ -22,7 +22,15 @@ export async function ingestText(chatId, text, reply) {
   await reply(`📝 已存 · text saved (#${n})`);
 }
 
-/** Voice/audio: persist audio, ACK, transcribe, show transcript. */
+/**
+ * Voice/audio: persist audio, ACK, transcribe, show transcript.
+ *
+ * The audio is saved and ACKed BEFORE transcription is attempted, so the recording
+ * survives every transcription outcome - including total vendor failure. When the
+ * transcript does not arrive, the block keeps a durable failure marker (reason +
+ * attachment name) and the reply tells Boyang the audio is safe and how to recover
+ * the words later, instead of a dead-end "transcription unavailable".
+ */
 export async function ingestVoice(chatId, { buffer, mime }, reply) {
   const b = await appendBlock(chatId, { type: "voice" });
   const n = b.seq + 1;
@@ -31,10 +39,35 @@ export async function ingestVoice(chatId, { buffer, mime }, reply) {
   await updateBlock(chatId, b.seq, { attachment: name, mime });
   await reply(ack(n), { done: true });
 
-  const transcript = await transcribe(pendingAttachmentPath(chatId, name));
-  await updateBlock(chatId, b.seq, { transcript });
-  if (transcript) await reply(`🎙️ 已转写 · transcribed (#${n}):\n\n> ${transcript}`);
-  else await reply(`🎙️ 已存，转写失败 · audio saved, transcription unavailable (#${n})`);
+  const r = await transcribe(pendingAttachmentPath(chatId, name), { mime });
+  if (r.ok) {
+    await updateBlock(chatId, b.seq, {
+      transcript: r.text,
+      sttProvider: r.provider,
+      sttAttempts: r.attempts,
+      sttFailure: null,
+    });
+    await reply(`🎙️ 已转写 · transcribed (#${n}):\n\n> ${r.text}`);
+    return;
+  }
+
+  await updateBlock(chatId, b.seq, {
+    transcript: null,
+    sttFailure: {
+      reason: r.reason,
+      attempts: r.attempts,
+      providers: r.providersTried,
+      error: r.lastError,
+      at: new Date().toISOString(),
+    },
+  });
+  const tried = r.providersTried.length ? r.providersTried.join(", ") : "none";
+  await reply(
+    `🎙️ 已存音频，转写失败但可恢复 · audio saved, transcription failed but recoverable (#${n})\n` +
+      `原因 reason: ${r.reason} (${r.attempts} attempt(s) via ${tried})\n` +
+      `↻ 笔记保存后可重跑 · after the note is saved, re-run:\n` +
+      `npm run retranscribe -- "${name}"`
+  );
 }
 
 /** Image: persist, ACK, vision-caption (for title/tags at compile). */

@@ -10,11 +10,27 @@ function embed(attachment) {
 }
 
 /** Render text as a `>`-prefixed blockquote (each line), preserving blank lines. */
-function blockquote(text) {
+export function blockquote(text) {
   return String(text)
     .split("\n")
     .map((line) => (line.length ? `> ${line}` : ">"))
     .join("\n");
+}
+
+/**
+ * Durable failure marker for a voice block whose transcript never arrived.
+ * The audio is always saved, so a missing transcript is recoverable, not lost —
+ * the marker records WHY it is missing and the exact command that recovers it,
+ * which is the difference between a retryable gap and a silent one.
+ */
+export function transcriptFailureMarker(block) {
+  const f = block.sttFailure || {};
+  const attempts = f.attempts ? `, ${f.attempts} attempt${f.attempts === 1 ? "" : "s"}` : "";
+  const why = f.reason ? ` (${f.reason}${attempts})` : "";
+  const retry = block.attachment
+    ? ` - audio saved; retry: npm run retranscribe -- "${block.attachment}"`
+    : "";
+  return `[Transcription unavailable${why}]${retry}`;
 }
 
 /**
@@ -27,7 +43,7 @@ function renderBlock(block) {
     case "text":
       return `${ts} ${String(block.text ?? "").trim()}`;
     case "voice": {
-      const bq = blockquote(block.transcript?.trim() || "[Transcription unavailable]");
+      const bq = blockquote(block.transcript?.trim() || transcriptFailureMarker(block));
       return `${ts} ${embed(block.attachment)}\n${bq}`;
     }
     case "image":
