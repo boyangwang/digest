@@ -15,6 +15,8 @@ LLM-generated title and tags. "Dear diary", multimodal.
    retries across two vendors (ElevenLabs Scribe v2 → OpenAI) so a transient vendor
    failure doesn't lose the words; if it still fails, the audio is saved anyway and the
    note carries a retryable marker (see **Recovering a failed transcript** below).
+   Retrying happens **off** the per-chat queue, so the next message is still ACKed
+   immediately; `/done` waits for it (bounded) before compiling.
    Photos/files → saved as attachments and embedded. Text → kept verbatim. **Exact order
    preserved.**
 3. Tap **✅ Done** or send `/done` → the bot compiles everything into one note:
@@ -30,6 +32,7 @@ LLM-generated title and tags. "Dear diary", multimodal.
 | `index.js` | entry — long polling |
 | `bot.js` | grammY handlers; `/done` + inline button; per-chat serial queue |
 | `ingest.js` | one input: persist → ACK → process (STT/vision) → processed |
+| `transcriptions.js` | in-flight transcriptions per chat; what `/done` waits on |
 | `store.js` | pending digest on disk (ordered, atomic, crash-safe) |
 | `finalize.js` | `/done`: assemble → title/tags → move attachments → compile → write |
 | `compile.js` | ordered blocks + metadata → final markdown + filename (pure) |
@@ -66,5 +69,16 @@ secret-run npm run retranscribe -- "20260102-091100-1-voice.ogg"   # one attachm
 secret-run npm run retranscribe -- --all --dry-run                 # everything still marked
 ```
 
-It runs the same retry/rotation loop the bot uses and replaces the marker in the note
-that embeds that attachment, leaving every other byte of the note alone.
+It runs the same retry/rotation loop the bot uses and replaces the marker line in the
+note that embeds that attachment, leaving every other byte of the body alone.
+
+It then **regenerates the note's `TITLE标题` and tags** from the now-complete text.
+Those were generated once, at `/done`, from an input where this voice note read
+`(no transcript)` - so without this the frontmatter contradicts the body. `CREATEDAT`
+is preserved verbatim; the recovered transcript is written first and is never rolled
+back if the title model is unavailable (you get a loud STALE warning instead).
+
+The **filename is left alone by default**, because renaming on disk breaks existing
+Obsidian links - Obsidian only rewrites links when the rename happens inside the app.
+The script prints the old filename next to the new title so you can rename it in
+Obsidian (F2). Pass `--rename` if you want the filesystem rename anyway.

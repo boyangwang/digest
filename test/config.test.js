@@ -33,11 +33,31 @@ test("the launchd plist logs to the same durable path as the code", async () => 
   const { readFileSync } = await import("node:fs");
   const plist = readFileSync(new URL("../launchd/network.deardiary.digest.plist", import.meta.url), "utf8");
   assert.ok(!plist.includes("/tmp/digest.log"), "plist must not point launchd at /tmp");
-  const expected = defaultConfigValue("LOG_PATH").replace(process.env.HOME, "");
-  assert.ok(plist.includes(expected), `plist should log to …${expected}`);
+  // Compare the HOME-relative suffix, not a $HOME-spliced absolute path: the plist
+  // hardcodes one machine's home, so splicing in $HOME makes this fail anywhere else
+  // for a reason that has nothing to do with the invariant being guarded.
+  const SUFFIX = ".local/share/digest/digest.log";
+  assert.ok(
+    defaultConfigValue("LOG_PATH").endsWith(SUFFIX),
+    `LOG_PATH should end with ${SUFFIX}, got ${defaultConfigValue("LOG_PATH")}`
+  );
+  assert.ok(plist.includes(SUFFIX), `plist should log to …/${SUFFIX}`);
 });
 
 test("the vendor rotation is configured with two vendors by default", () => {
   assert.equal(defaultConfigValue("STT_PROVIDER_ORDER"), "elevenlabs,openai");
   assert.equal(defaultConfigValue("STT_MAX_ATTEMPTS"), "6");
+});
+
+test("the retry budget still covers the documented worst case", () => {
+  // 6 attempts x per-attempt timeout + the five jittered backoff sleeps.
+  const attempts = Number(defaultConfigValue("STT_MAX_ATTEMPTS"));
+  const perAttempt = Number(defaultConfigValue("STT_ATTEMPT_TIMEOUT_MS"));
+  const budget = Number(defaultConfigValue("STT_TOTAL_BUDGET_MS"));
+  const worstCaseSleep = (1000 + 2000 + 4000 + 8000 + 8000) * 1.25;
+  assert.equal(perAttempt, 60000, "the captain ruled 60s per attempt, not 45s");
+  assert.ok(
+    attempts * perAttempt + worstCaseSleep <= budget,
+    `budget ${budget}ms cannot cover ${attempts} x ${perAttempt}ms + ${worstCaseSleep}ms of backoff`
+  );
 });

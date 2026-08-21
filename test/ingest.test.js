@@ -29,7 +29,10 @@ const AUDIO = Buffer.from("pretend this is a 4-minute voice note");
 test("total transcription failure still saves the audio and ACKs", async () => {
   const CHAT = 8801;
   const { sent, reply } = collector();
-  await ingestVoice(CHAT, { buffer: AUDIO, mime: "audio/ogg" }, reply);
+  // ingestVoice returns as soon as the audio is durable + ACKed; the transcription
+  // runs off the queue, so the outcome is on `.transcription`.
+  const { transcription } = await ingestVoice(CHAT, { buffer: AUDIO, mime: "audio/ogg" }, reply);
+  await transcription;
 
   const m = await store.loadPending(CHAT);
   const b = m.blocks[0];
@@ -51,7 +54,9 @@ test("total transcription failure still saves the audio and ACKs", async () => {
   assert.match(ackMsg, /ACK #1/);
   assert.match(failMsg, /audio saved/);
   assert.match(failMsg, /recoverable/);
-  assert.match(failMsg, new RegExp(`retranscribe -- "${b.attachment}"`));
+  // --all, not the pending attachment name: moveAttachment renames on collision at
+  // /done, so a name quoted here is not guaranteed to exist in the vault.
+  assert.match(failMsg, /npm run retranscribe -- --all/);
   assert.doesNotMatch(failMsg, /transcription unavailable/); // the dead-end wording is gone
 
   await store.clearPending(CHAT);
@@ -60,7 +65,8 @@ test("total transcription failure still saves the audio and ACKs", async () => {
 test("a failed transcript survives into the note as a retryable marker, audio embedded", async () => {
   const CHAT = 8802;
   const { reply } = collector();
-  await ingestVoice(CHAT, { buffer: AUDIO, mime: "audio/ogg" }, reply);
+  const { transcription } = await ingestVoice(CHAT, { buffer: AUDIO, mime: "audio/ogg" }, reply);
+  await transcription;
   await ingestFile(CHAT, { buffer: Buffer.from("%PDF"), origName: "r.pdf", mime: "application/pdf" }, reply);
 
   const pending = await store.loadPending(CHAT);

@@ -18,7 +18,8 @@ process.env.OPENAI_API_KEY = "oa-test-key";
 
 const { transcribe, STT_FAIL, classify, backoffMs } = await import("../src/stt.js");
 const { SttHttpError, SttEmptyError, SttTransportError } = await import("../src/stt-providers.js");
-const { STT_MAX_ATTEMPTS, STT_BACKOFF_MAX_MS, STT_TOTAL_BUDGET_MS } = await import("../src/config.js");
+const { STT_MAX_ATTEMPTS, STT_BACKOFF_MAX_MS, STT_TOTAL_BUDGET_MS, STT_ATTEMPT_TIMEOUT_MS } =
+  await import("../src/config.js");
 
 const AUDIO = join(base, "note.ogg");
 writeFileSync(AUDIO, Buffer.from("fake-ogg-bytes"));
@@ -232,17 +233,49 @@ test("the retry loop sleeps between transient attempts, inside the documented bo
   const worstCaseSleep = h.naps.reduce((a, b) => a + b, 0) * 1.25; // max jitter
   assert.ok(worstCaseSleep <= 28750);
   // The stated worst case: attempts × per-attempt timeout + jittered sleeps ≤ budget.
-  assert.ok(STT_MAX_ATTEMPTS * 45000 + worstCaseSleep <= STT_TOTAL_BUDGET_MS);
+  // Read from config, never a literal — that literal is exactly how the two drifted.
+  assert.ok(STT_MAX_ATTEMPTS * STT_ATTEMPT_TIMEOUT_MS + worstCaseSleep <= STT_TOTAL_BUDGET_MS);
 });
 
 test("the total-time budget stops the loop even when attempts remain", async () => {
-  // Each call burns 100s of the 300s budget, so attempt 4 never starts.
-  const h = harness([{ ...httpFail(503), costMs: 100000 }]);
+  // Each call burns a fifth of the budget, so the loop runs out of time before it
+  // runs out of attempts.
+  const costMs = Math.ceil(STT_TOTAL_BUDGET_MS / 5);
+  const h = harness([{ ...httpFail(503), costMs }]);
   const r = await transcribe(AUDIO, h.opts);
 
   assert.equal(r.ok, false);
   assert.ok(h.calls.length < STT_MAX_ATTEMPTS, `expected the budget to bite, got ${h.calls.length} calls`);
-  assert.ok(h.clock.now() <= STT_TOTAL_BUDGET_MS + 100000);
+  assert.ok(h.clock.now() <= STT_TOTAL_BUDGET_MS + costMs);
+});
+
+test("the per-attempt timeout covers the response BODY, not just the headers", async () => {
+  // A vendor that answers 200 and then stalls mid-body used to escape the attempt
+  // budget entirely: the abort timer was cleared as soon as fetch() resolved.
+  let aborted = false;
+  const fetchImpl = async (url, init) => ({
+    ok: true,
+    status: 200,
+    text: async () => "",
+    json: () =>
+      new Promise((_, reject) => {
+        init.signal.addEventListener("abort", () => {
+          aborted = true;
+          reject(Object.assign(new Error("The operation was aborted"), { name: "AbortError" }));
+        });
+      }),
+  });
+  const r = await transcribe(AUDIO, {
+    fetchImpl,
+    sleepImpl: async () => {},
+    attemptTimeoutMs: 20,
+    maxAttempts: 1,
+    providerOrder: ["elevenlabs"],
+  });
+
+  assert.equal(aborted, true, "a stalled body must be aborted by the attempt timeout");
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, STT_FAIL.EXHAUSTED); // transport error → transient, not bad audio
 });
 
 // ---------------------------------------------------------------------------
@@ -298,6 +331,26 @@ test("no vendor available: reports it without pretending to have tried", async (
   assert.equal(r.reason, STT_FAIL.UNCONFIGURED);
   assert.equal(r.attempts, 0);
   assert.equal(h.calls.length, 0);
+});
+
+test("the audio MIME follows the file extension when the caller has none", async () => {
+  // The recovery script only has a path. Mislabelling an .mp3 as audio/ogg invites a
+  // 400, and 400 is TERMINAL — the operator would be told the audio is bad when it
+  // is fine.
+  const mp3 = join(base, "note.mp3");
+  writeFileSync(mp3, Buffer.from("fake-mp3-bytes"));
+  const h = harness([ok("from an mp3")]);
+  await transcribe(mp3, h.opts);
+  assert.equal(h.calls[0].form.get("file").type, "audio/mpeg");
+
+  const h2 = harness([ok("from an ogg")]);
+  await transcribe(AUDIO, h2.opts);
+  assert.equal(h2.calls[0].form.get("file").type, "audio/ogg");
+
+  // An explicit MIME still wins over the extension.
+  const h3 = harness([ok("explicit")]);
+  await transcribe(mp3, { ...h3.opts, mime: "audio/mp4" });
+  assert.equal(h3.calls[0].form.get("file").type, "audio/mp4");
 });
 
 test("unreadable audio fails fast without calling any vendor", async () => {

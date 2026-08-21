@@ -115,7 +115,9 @@ export function buildBot() {
     enqueue(chatId, () => ingestText(chatId, ctx.message.text, reply));
   });
 
-  // Voice + audio.
+  // Voice + audio. `ingestVoice` returns once the audio is persisted and ACKed;
+  // its transcription runs off this queue (see src/transcriptions.js), so a retry
+  // storm never stalls the next message. /done waits for it, bounded.
   bot.on(["message:voice", "message:audio"], (ctx) => {
     const chatId = ctx.chat.id;
     const reply = makeReply(ctx);

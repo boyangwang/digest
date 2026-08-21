@@ -53,32 +53,64 @@ export class SttTransportError extends Error {
  * POST a multipart form and hand back parsed JSON, mapping every failure onto a
  * typed error. Both vendors happen to speak multipart-in / JSON-out, which is
  * why one helper covers them.
+ *
+ * `timeoutMs` covers the WHOLE exchange, body included. `fetch()` resolves as
+ * soon as the headers land, so clearing the timer there would leave a vendor
+ * that stalls mid-body hanging on undici's own timeout instead of the attempt
+ * budget - and would make the "hard ceiling" in STT_TOTAL_BUDGET_MS untrue.
  */
 async function postForm(provider, { url, headers, form, timeoutMs, fetchImpl }) {
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), timeoutMs);
-  let res;
   try {
-    res = await fetchImpl(url, { method: "POST", headers, body: form, signal: ac.signal });
-  } catch (e) {
-    throw new SttTransportError(provider, e);
+    let res;
+    try {
+      res = await fetchImpl(url, { method: "POST", headers, body: form, signal: ac.signal });
+    } catch (e) {
+      throw new SttTransportError(provider, e);
+    }
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new SttHttpError(provider, res.status, body);
+    }
+    try {
+      return await res.json();
+    } catch (e) {
+      // 200 with an unparseable body (or a body that never finished arriving)
+      // is a vendor hiccup, not a bad request.
+      throw new SttTransportError(provider, e);
+    }
   } finally {
     clearTimeout(timer);
   }
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new SttHttpError(provider, res.status, body);
-  }
-  try {
-    return await res.json();
-  } catch (e) {
-    // 200 with an unparseable body is a vendor hiccup, not a bad request.
-    throw new SttTransportError(provider, e);
-  }
 }
 
-function audioBlob({ buffer, mime }) {
-  return new Blob([buffer], { type: mime || "audio/ogg" });
+// A container mislabelled as something else is a 400 from most vendors, and 400
+// is TERMINAL (STT_FAIL.BAD_AUDIO) - so guessing the type wrong tells the operator
+// their audio is bad when it is not. Derive it from the filename whenever the
+// caller has no MIME to hand (the recovery script only ever has a path).
+const AUDIO_MIME_BY_EXT = {
+  ".ogg": "audio/ogg",
+  ".oga": "audio/ogg",
+  ".opus": "audio/ogg",
+  ".mp3": "audio/mpeg",
+  ".m4a": "audio/mp4",
+  ".mp4": "audio/mp4",
+  ".aac": "audio/aac",
+  ".wav": "audio/wav",
+  ".flac": "audio/flac",
+  ".webm": "audio/webm",
+};
+
+/** Caller-supplied MIME wins; else the extension; else Telegram's usual `.ogg`. */
+export function audioMimeFor(filename, mime) {
+  if (mime) return mime;
+  const ext = String(filename || "").toLowerCase().match(/\.[a-z0-9]+$/)?.[0];
+  return AUDIO_MIME_BY_EXT[ext] || "audio/ogg";
+}
+
+function audioBlob({ buffer, filename, mime }) {
+  return new Blob([buffer], { type: audioMimeFor(filename, mime) });
 }
 
 const elevenlabs = {

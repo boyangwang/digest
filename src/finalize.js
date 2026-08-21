@@ -1,8 +1,9 @@
 // Finalize — on /done: assemble → title/tags → move attachments → compile → write note.
 import { promises as fs } from "node:fs";
 import { join, extname, basename } from "node:path";
-import { DIGEST_DIR, ATTACHMENTS_DIR } from "./config.js";
+import { DIGEST_DIR, ATTACHMENTS_DIR, STT_TOTAL_BUDGET_MS } from "./config.js";
 import { loadPending, clearPending, pendingAttachmentPath } from "./store.js";
+import { waitForTranscriptions } from "./transcriptions.js";
 import { generateTitleAndTags } from "./llm.js";
 import { compileNote } from "./compile.js";
 import { log } from "./log.js";
@@ -48,22 +49,32 @@ async function moveAttachment(chatId, name) {
   return finalName;
 }
 
-/** Write markdown to the vault, resolving filename collisions. Returns the written filename. */
-async function writeNote(filename, markdown) {
-  await fs.mkdir(DIGEST_DIR, { recursive: true });
+/**
+ * First free slot for `filename` in `dir`, disambiguating with " (2)", " (3)", …
+ * Exported so the recovery script renames exactly the way finalize does.
+ * @returns {Promise<{finalName:string, dest:string}>}
+ */
+export async function freeNotePath(dir, filename) {
   const ext = extname(filename); // ".md"
   const stem = basename(filename, ext);
   let finalName = filename;
-  let dest = join(DIGEST_DIR, finalName);
+  let dest = join(dir, finalName);
   for (let n = 2; ; n++) {
     try {
       await fs.access(dest);
       finalName = `${stem} (${n})${ext}`;
-      dest = join(DIGEST_DIR, finalName);
+      dest = join(dir, finalName);
     } catch {
       break;
     }
   }
+  return { finalName, dest };
+}
+
+/** Write markdown to the vault, resolving filename collisions. Returns the written filename. */
+async function writeNote(filename, markdown) {
+  await fs.mkdir(DIGEST_DIR, { recursive: true });
+  const { finalName, dest } = await freeNotePath(DIGEST_DIR, filename);
   const tmp = `${dest}.tmp`;
   await fs.writeFile(tmp, markdown, "utf8");
   await fs.rename(tmp, dest);
@@ -72,9 +83,21 @@ async function writeNote(filename, markdown) {
 
 /**
  * Finalize the pending digest for a chat.
+ *
+ * Waits for that chat's still-running transcriptions first (bounded by
+ * `transcriptionWaitMs`). Transcription runs outside the serial queue, so without
+ * this wait the title/tags would routinely be generated from "(no transcript)".
+ * If the bound bites we compile ANYWAY - the note then carries the retryable
+ * failure marker, and `npm run retranscribe` regenerates title and tags later.
+ *
  * @returns {Promise<{filename:string, fullTitle:string}|null>} null if nothing to compile.
  */
-export async function finalizeDigest(chatId) {
+export async function finalizeDigest(chatId, { transcriptionWaitMs = STT_TOTAL_BUDGET_MS } = {}) {
+  if (!(await loadPending(chatId))?.blocks?.length) return null;
+
+  await waitForTranscriptions(chatId, { timeoutMs: transcriptionWaitMs });
+
+  // Re-read: a transcript that landed while we waited rewrote the manifest on disk.
   const manifest = await loadPending(chatId);
   if (!manifest || manifest.blocks.length === 0) return null;
 

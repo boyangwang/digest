@@ -64,8 +64,17 @@ function renderBlock(block) {
  * LLM-generated dynamic bilingual tags.
  */
 export function buildProperties(fullTitle, tags, startDate) {
+  return renderProperties(createdAt(startDate), fullTitle, tags);
+}
+
+/**
+ * Same rules, but with CREATEDAT supplied verbatim — the recovery script rewrites a
+ * note's title and tags long after the fact and must NOT regenerate the note's
+ * identity timestamp. Shared so the two paths cannot drift.
+ */
+export function renderProperties(createdAtValue, fullTitle, tags) {
   const props = {};
-  props.CREATEDAT = createdAt(startDate);
+  if (createdAtValue != null) props.CREATEDAT = createdAtValue;
   props["TITLE标题"] = fullTitle;
   for (const t of tags || []) {
     if (!t || !t.key) continue;

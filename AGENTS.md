@@ -11,6 +11,10 @@
   running service.
 
 ### Log (newest first)
+- 2026-08-21 — v1.2.1 review round: transcription moved off the per-chat queue (+ per-chat
+  manifest lock, bounded `/done` wait), attempt timeout back to 60s (budget 390s) and now
+  covering the response body, `retranscribe` regenerates title/tags and gained `--rename`,
+  tests no longer write the production log.
 - 2026-08-21 — v1.2.1: STT retry + vendor rotation (ElevenLabs → OpenAI), durable LOG_PATH,
   retryable failure marker + `npm run retranscribe`; backfilled two lost transcripts.
 - 2026-07-07 — v1.2 shipped: JS build, live APIs verified, UAT passed, deployed launchd + pushed main.
@@ -27,6 +31,16 @@
 5. Properties = **dynamic, LLM-chosen** bilingual `English中文` tags (NOT a fixed schema) + always `CREATEDAT: YYYY-MM-DD HH:MM:SS` + always `TITLE标题`.
 6. Two Telegram replies per input, both carrying the serial `#N`; ACK = `✓ ACK #N` with the inline Done button attached; ACK is atomic-with-persistence; per-chat serial queue = linear/deterministic.
 7. Body blocks use IM-style **inline** timestamps: `**MM-DD HH:MM** content` (same line, month-day-hour-minute).
+8. **Transcription runs OUTSIDE the per-chat serial queue** (`src/transcriptions.js`). The
+   block's slot is reserved by `appendBlock` at arrival, so a late transcript still renders in
+   order; holding the queue for the retry budget would only stall the next message. `/done`
+   waits on the in-flight set, bounded by `STT_TOTAL_BUDGET_MS`, then compiles anyway with the
+   retryable marker. Manifest read-modify-writes take a per-chat lock in `store.js` because the
+   queue no longer serializes them.
+9. `npm run retranscribe` **regenerates `TITLE标题` + tags** after a successful recovery (they
+   were generated once at `/done` from `(no transcript)`), preserving `CREATEDAT` verbatim. The
+   filename is deliberately NOT renamed by default — a filesystem rename breaks Obsidian links;
+   `--rename` opts in.
 
 ## What this is
 Telegram bot: send text/voice/photos/files in any order → tap ✅ Done / `/done` → one bilingual
@@ -35,7 +49,8 @@ Markdown note in the Obsidian vault. See `README.md` and `specs/prd-digest-v1.2.
 ## Stack
 Node ≥22 (ESM), grammY, `openai` client → Tencent TokenHub, `yaml`. STT = ElevenLabs Scribe v2
 → OpenAI `gpt-4o-transcribe` (plain `fetch`/`FormData`, no SDK).
-Tests: `node --test`.
+Tests: `node --test` via `npm test`, which loads `test/setup.mjs` with `--import` to pin
+`DIGEST_LOG_PATH` at a temp dir — otherwise the suite appends to the live service log.
 
 ## Key commands
 ```bash
@@ -55,7 +70,10 @@ secret-run npm run retranscribe -- --all --dry-run   # recover any failed transc
   directly. Retry/rotation/attempt-cap are data-driven from `config.js`; add a vendor in
   `stt-providers.js` and name it in `STT_PROVIDER_ORDER`.
 - **Never default a log or state path under `/tmp`** — macOS purges it while launchd holds the
-  handle, so the history goes to a deleted inode. `DATA_DIR` is the durable home.
+  handle, so the history goes to a deleted inode. `DATA_DIR` is the durable home. Corollary:
+  **tests must never write to the real log** — `test/setup.mjs` pins `DIGEST_LOG_PATH`.
+- **The STT attempt timeout must cover the response BODY, not just the headers** — `fetch()`
+  resolves on headers, so an abort timer cleared there lets a stalled body outlive the budget.
 - Output vault: `~/Documents/NotesVault/Heresy-Anthology/digest/` (+ `ATTACHMENTS/`).
 - Secrets: `DIGEST_BOT_TOKEN`, `ELEVENLABS_API_KEY`, `OPENAI_API_KEY`, `TENCENT_TOKENHUB_API_KEY` (sops vault).
 

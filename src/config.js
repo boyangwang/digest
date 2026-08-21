@@ -67,17 +67,25 @@ export const STT_PROVIDER_ORDER = (process.env.DIGEST_STT_PROVIDERS || "elevenla
   .filter(Boolean);
 
 export const STT_MAX_ATTEMPTS = Number(process.env.DIGEST_STT_MAX_ATTEMPTS || 6);
-export const STT_ATTEMPT_TIMEOUT_MS = Number(process.env.DIGEST_STT_ATTEMPT_TIMEOUT_MS || 45000);
+// 60s per attempt. A long voice note can legitimately take most of a minute; a
+// tighter cap would time out every one of the six attempts on the same slow file
+// and `npm run retranscribe` — which shares this cap — would fail identically.
+export const STT_ATTEMPT_TIMEOUT_MS = Number(process.env.DIGEST_STT_ATTEMPT_TIMEOUT_MS || 60000);
 // Backoff between attempts: base * 2^(n-1), capped, then jittered ±25%.
 export const STT_BACKOFF_BASE_MS = Number(process.env.DIGEST_STT_BACKOFF_BASE_MS || 1000);
 export const STT_BACKOFF_MAX_MS = Number(process.env.DIGEST_STT_BACKOFF_MAX_MS || 8000);
 /**
- * Hard ceiling on the whole transcribe() call — a Telegram user is waiting on the
- * reply. Worst case with the defaults: 6 × 45s of request time + 5 backoff sleeps
- * (1+2+4+8+8 = 23s, ≤28.75s once jittered) ≈ 299s, so 300s is the binding bound.
- * Checked before each attempt AND used to clamp each attempt's own timeout.
+ * Hard ceiling on the whole transcribe() call. Worst case with the defaults:
+ * 6 × 60s of request time (360000ms) + the 5 backoff sleeps (1+2+4+8+8 = 23000ms,
+ * at most 28750ms once jittered by +25%) = 388750ms, so 390000ms is the binding
+ * bound. Checked before each attempt AND used to clamp each attempt's own timeout.
+ *
+ * Nobody waits on this in the chat: transcription runs OUTSIDE the per-chat serial
+ * queue (see `src/transcriptions.js`), so a long retry storm never delays the next
+ * message or its ACK. `/done` is the one thing that waits, and it waits bounded by
+ * this same number before compiling with the retryable failure marker instead.
  */
-export const STT_TOTAL_BUDGET_MS = Number(process.env.DIGEST_STT_TOTAL_BUDGET_MS || 300000);
+export const STT_TOTAL_BUDGET_MS = Number(process.env.DIGEST_STT_TOTAL_BUDGET_MS || 390000);
 
 // --- Filename safety (macOS/APFS: 255 bytes per component) ---
 export const FILENAME_TITLE_MAX_BYTES = 200;
