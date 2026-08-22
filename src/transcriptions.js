@@ -51,23 +51,23 @@ export function inflightCount(chatId) {
 export async function waitForTranscriptions(chatId, { timeoutMs = STT_TOTAL_BUDGET_MS } = {}) {
   const key = String(chatId);
   const deadline = Date.now() + timeoutMs;
+  // Re-loop rather than return after the race: a transcript that landed while we
+  // waited may have been followed by another arrival, and the set is authoritative.
   for (;;) {
     const set = inflight.get(key);
     if (!set || set.size === 0) return true;
+
     const remaining = deadline - Date.now();
-    if (remaining <= 0) {
-      log.warn(`finalize: ${set.size} transcription(s) still in flight after ${timeoutMs}ms — compiling anyway`);
-      return false;
+    let settled = false;
+    if (remaining > 0) {
+      let timer;
+      const bound = new Promise((resolve) => {
+        timer = setTimeout(() => resolve(false), remaining);
+        timer.unref?.();
+      });
+      settled = await Promise.race([Promise.all([...set]).then(() => true), bound]);
+      clearTimeout(timer);
     }
-    let timer;
-    const bound = new Promise((resolve) => {
-      timer = setTimeout(() => resolve(false), remaining);
-      timer.unref?.();
-    });
-    // Re-loop rather than return: a transcript that landed while we waited may
-    // have been followed by another arrival, and the set is authoritative.
-    const settled = await Promise.race([Promise.all([...set]).then(() => true), bound]);
-    clearTimeout(timer);
     if (!settled) {
       log.warn(`finalize: ${set.size} transcription(s) still in flight after ${timeoutMs}ms — compiling anyway`);
       return false;

@@ -2,7 +2,7 @@
 import { promises as fs } from "node:fs";
 import { join, extname, basename } from "node:path";
 import { DIGEST_DIR, ATTACHMENTS_DIR, STT_TOTAL_BUDGET_MS } from "./config.js";
-import { loadPending, clearPending, pendingAttachmentPath } from "./store.js";
+import { loadPending, withPendingDigest, pendingAttachmentPath } from "./store.js";
 import { waitForTranscriptions } from "./transcriptions.js";
 import { generateTitleAndTags } from "./llm.js";
 import { compileNote } from "./compile.js";
@@ -90,6 +90,16 @@ async function writeNote(filename, markdown) {
  * If the bound bites we compile ANYWAY - the note then carries the retryable
  * failure marker, and `npm run retranscribe` regenerates title and tags later.
  *
+ * Residual, accepted: `runFinalize` is itself enqueued on the per-chat queue
+ * (src/bot.js), so this bounded wait holds that queue for up to the budget. Sending
+ * a voice note, tapping Done while both vendors are down, then sending more, makes
+ * the next message wait behind /done. That is inherent - blocks cannot be appended
+ * mid-compile - and is why the wait is bounded rather than open-ended.
+ *
+ * Everything after the wait runs inside the store's per-chat lock: read, compile,
+ * write, clear. See `withPendingDigest` for the straggler race that opens up when
+ * those steps take the lock separately.
+ *
  * @returns {Promise<{filename:string, fullTitle:string}|null>} null if nothing to compile.
  */
 export async function finalizeDigest(chatId, { transcriptionWaitMs = STT_TOTAL_BUDGET_MS } = {}) {
@@ -97,31 +107,33 @@ export async function finalizeDigest(chatId, { transcriptionWaitMs = STT_TOTAL_B
 
   await waitForTranscriptions(chatId, { timeoutMs: transcriptionWaitMs });
 
-  // Re-read: a transcript that landed while we waited rewrote the manifest on disk.
-  const manifest = await loadPending(chatId);
-  if (!manifest || manifest.blocks.length === 0) return null;
+  return withPendingDigest(chatId, async (manifest, { clear }) => {
+    // Read under the lock: a transcript that landed while we waited rewrote the
+    // manifest on disk, and one landing from here on is made to wait for us.
+    if (!manifest || manifest.blocks.length === 0) return null;
 
-  // 1. Move attachments into the vault, updating block names so embeds match.
-  for (const b of manifest.blocks) {
-    if (b.attachment) b.attachment = await moveAttachment(chatId, b.attachment);
-  }
+    // 1. Move attachments into the vault, updating block names so embeds match.
+    for (const b of manifest.blocks) {
+      if (b.attachment) b.attachment = await moveAttachment(chatId, b.attachment);
+    }
 
-  // 2. Title + tags from the substance.
-  const llmInput = buildLLMInput(manifest.blocks);
-  const { title, tags } = await generateTitleAndTags(llmInput);
+    // 2. Title + tags from the substance.
+    const llmInput = buildLLMInput(manifest.blocks);
+    const { title, tags } = await generateTitleAndTags(llmInput);
 
-  // 3. Compile + write.
-  const startDate = new Date(manifest.startedAt);
-  const { filename, markdown, fullTitle } = compileNote({
-    blocks: manifest.blocks,
-    title,
-    tags,
-    startDate,
+    // 3. Compile + write.
+    const startDate = new Date(manifest.startedAt);
+    const { filename, markdown, fullTitle } = compileNote({
+      blocks: manifest.blocks,
+      title,
+      tags,
+      startDate,
+    });
+    const written = await writeNote(filename, markdown);
+    log.info(`Wrote note: ${written}`);
+
+    // 4. Clear pending state.
+    await clear();
+    return { filename: written, fullTitle };
   });
-  const written = await writeNote(filename, markdown);
-  log.info(`Wrote note: ${written}`);
-
-  // 4. Clear pending state.
-  await clearPending(chatId);
-  return { filename: written, fullTitle };
 }

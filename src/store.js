@@ -134,9 +134,35 @@ export function pendingAttachmentPath(chatId, filename) {
   return join(chatDir(chatId), filename);
 }
 
+async function clearPendingUnlocked(chatId) {
+  await fs.rm(chatDir(chatId), { recursive: true, force: true });
+}
+
 /** Remove the pending digest entirely (after a successful compile). */
 export function clearPending(chatId) {
-  return withChatLock(chatId, () => fs.rm(chatDir(chatId), { recursive: true, force: true }));
+  return withChatLock(chatId, () => clearPendingUnlocked(chatId));
+}
+
+/**
+ * Run `fn(manifest, { clear })` with the chat's manifest lock held for the WHOLE
+ * call, so a read → decide → clear sequence is atomic against `updateBlock`.
+ *
+ * Finalize needs this. Reading the manifest and clearing it under separate locks
+ * leaves a window in which a straggler transcription's `updateBlock` succeeds -
+ * telling the user the words were saved - while the note being written was
+ * compiled from the copy read before that write, and the `clearPending` that
+ * follows throws the transcript away. Under this lock the straggler either lands
+ * BEFORE finalize reads (so the transcript is in the note) or AFTER the clear (so
+ * `updateBlock` returns null and the user is told to run `retranscribe`).
+ *
+ * `clear` is the unlocked remove: calling the exported `clearPending` from inside
+ * `fn` would deadlock on the lock `fn` already holds.
+ */
+export function withPendingDigest(chatId, fn) {
+  return withChatLock(chatId, async () => {
+    const manifest = await loadPending(chatId);
+    return fn(manifest, { clear: () => clearPendingUnlocked(chatId) });
+  });
 }
 
 /** List chat ids that currently have a pending digest (for startup logging). */

@@ -93,12 +93,17 @@ export async function captionImage(imagePath, mime = "image/jpeg") {
 
 /**
  * Generate title (bilingual) + dynamic bilingual tags from the compiled note text.
- * Returns { title: { zh, en }, tags: [{key,value}] }. Falls back gracefully.
+ * Returns { title: { zh, en }, tags: [{key,value}], fallback }. Falls back gracefully.
+ *
+ * `fallback` is true when the model never produced a usable answer (no key, request
+ * failed, unparseable output) and the title is just the input's first line. Callers
+ * that OVERWRITE an existing title must check it: a real answer can legitimately be
+ * Chinese-only with no tags, which is indistinguishable from the fallback by shape.
  */
 export async function generateTitleAndTags(noteText) {
   const fallback = () => {
     const firstLine = (noteText.split("\n").find((l) => l.trim()) || "Untitled").trim();
-    return { title: { zh: firstLine.slice(0, 60), en: "" }, tags: [] };
+    return { title: { zh: firstLine.slice(0, 60), en: "" }, tags: [], fallback: true };
   };
   if (!TOKENHUB_API_KEY) {
     log.warn("No TENCENT_TOKENHUB_API_KEY — using fallback title");
@@ -127,7 +132,7 @@ export async function generateTitleAndTags(noteText) {
           .map((t) => ({ key: String(t.key).trim(), value: String(t.value ?? "").trim() }))
       : [];
     log.info(`Title generated (zh=${parsed.title_zh?.length || 0} en=${parsed.title_en?.length || 0} chars, ${tags.length} tags)`);
-    return { title: { zh: parsed.title_zh || "", en: parsed.title_en || "" }, tags };
+    return { title: { zh: parsed.title_zh || "", en: parsed.title_en || "" }, tags, fallback: false };
   } catch (e) {
     log.error(`Title LLM error: ${e?.message || e}`);
     return fallback();

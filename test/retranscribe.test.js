@@ -131,11 +131,11 @@ test("the reconstructed LLM input feeds the SAME builder finalize uses", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Rewriting the frontmatter
+// Rewriting the frontmatter — MERGE, never rebuild
 // ---------------------------------------------------------------------------
 
-test("rewriteFrontmatter replaces title + tags but keeps CREATEDAT verbatim", () => {
-  const { markdown, dropped } = rewriteFrontmatter(NOTE, "新标题 A new title", [
+test("rewriteFrontmatter replaces title + generated tags but keeps CREATEDAT verbatim", () => {
+  const { markdown, replaced, added } = rewriteFrontmatter(NOTE, "新标题 A new title", [
     { key: "Category分类", value: "Life生活" },
     { key: "Themes主题", value: "Recovery恢复" },
   ]);
@@ -144,14 +144,51 @@ test("rewriteFrontmatter replaces title + tags but keeps CREATEDAT verbatim", ()
   assert.equal(fm.CREATEDAT, "2026-01-02 09:10:11", "the note's identity timestamp must never be regenerated");
   assert.equal(fm["TITLE标题"], "新标题 A new title");
   assert.equal(fm["Themes主题"], "Recovery恢复");
-  assert.deepEqual(dropped, [], "every old property was superseded by a new one");
+  assert.deepEqual(replaced.sort(), ["Category分类", "TITLE标题", "Themes主题"]);
+  assert.deepEqual(added, []);
 
   // The body is untouched, byte for byte.
   assert.equal(splitNote(markdown).body, splitNote(NOTE).body);
 });
 
-test("rewriteFrontmatter reports properties the new tag set does not cover", () => {
-  const { markdown, dropped } = rewriteFrontmatter(NOTE, "T", [{ key: "Category分类", value: "X" }]);
-  assert.deepEqual(dropped, ["Themes主题"]);
+test("a property the new tag set does not mention SURVIVES — these are hand-editable notes", () => {
+  const { markdown, leftAlone, removed } = rewriteFrontmatter(NOTE, "T", [
+    { key: "Category分类", value: "X" },
+  ]);
+  const fm = yamlParse(splitNote(markdown).frontmatterRaw);
+  assert.equal(fm["Themes主题"], "占位Placeholder", "an unmentioned property must not be dropped");
+  assert.ok(leftAlone.includes("Themes主题"));
+  assert.deepEqual(removed, [], "merging never removes a key");
+});
+
+test("hand-added properties (aliases, cssclasses, Dataview fields) survive a recovery run", () => {
+  const note = NOTE.replace(
+    "Themes主题: 占位Placeholder",
+    "Themes主题: 占位Placeholder\naliases:\n  - short name\ncssclasses:\n  - wide\nreadwise: 12345"
+  );
+  const { markdown, leftAlone } = rewriteFrontmatter(note, "新的 New", [{ key: "Category分类", value: "X" }]);
+  const fm = yamlParse(splitNote(markdown).frontmatterRaw);
+  assert.deepEqual(fm.aliases, ["short name"]);
+  assert.deepEqual(fm.cssclasses, ["wide"]);
+  assert.equal(fm.readwise, 12345);
+  for (const k of ["aliases", "cssclasses", "readwise", "Themes主题"]) assert.ok(leftAlone.includes(k));
+});
+
+test("a tag named CREATEDAT can never overwrite the note's identity timestamp", () => {
+  const { markdown } = rewriteFrontmatter(NOTE, "T", [{ key: "CREATEDAT", value: "1999-01-01 00:00:00" }]);
+  assert.equal(yamlParse(splitNote(markdown).frontmatterRaw).CREATEDAT, "2026-01-02 09:10:11");
+});
+
+test("--replace-properties is the ONLY way a key is removed, and it reports which", () => {
+  const { markdown, removed } = rewriteFrontmatter(NOTE, "T", [{ key: "Category分类", value: "X" }], {
+    replaceAll: true,
+  });
+  assert.deepEqual(removed, ["Themes主题"]);
   assert.ok(!markdown.includes("Themes主题"));
+  assert.equal(yamlParse(splitNote(markdown).frontmatterRaw).CREATEDAT, "2026-01-02 09:10:11");
+});
+
+test("a note with no frontmatter is never given one", () => {
+  const bare = "**01-02 09:11** ![[Heresy-Anthology/digest/ATTACHMENTS/a-voice.ogg]]\n> hand-written\n";
+  assert.equal(rewriteFrontmatter(bare, "T", []), null);
 });

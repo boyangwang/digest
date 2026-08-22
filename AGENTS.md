@@ -41,6 +41,15 @@
    were generated once at `/done` from `(no transcript)`), preserving `CREATEDAT` verbatim. The
    filename is deliberately NOT renamed by default — a filesystem rename breaks Obsidian links;
    `--rename` opts in.
+10. **The recovery script's eligibility gate is a hard precondition.** Measured 2026-08-22: of
+   577 notes in the digest folder, 494 have NO frontmatter (hand-written), 63 carry a legacy
+   `创建时间`/`分类`/`主题` schema, 19 carry the current schema. A note is touched ONLY if it
+   carries the failed-transcript marker AND already has frontmatter; everything else is refused
+   with a reason and zero bytes changed. Never create frontmatter, never migrate a legacy note,
+   never let an explicitly named attachment bypass the gate.
+11. Frontmatter rewriting **MERGES** into the existing block (`parseDocument`, so untouched keys
+   keep their formatting): only `TITLE标题` and the generated tag keys are written. Hand-added
+   keys survive. `--replace-properties` is the only way a key is removed.
 
 ## What this is
 Telegram bot: send text/voice/photos/files in any order → tap ✅ Done / `/done` → one bilingual
@@ -58,7 +67,9 @@ npm test                          # unit + offline E2E
 secret-run node src/index.js      # run locally (vault keys injected)
 bash launchd/deploy.sh            # deploy launchd network.deardiary.digest
 tail -f ~/.local/share/digest/digest.log   # NEVER /tmp — macOS purges it under the running service
-secret-run npm run retranscribe -- --all --dry-run   # recover any failed transcript
+secret-run npm run retranscribe -- --check           # FREE census: eligible vs refused notes
+secret-run npm run retranscribe -- --all             # recover any failed transcript
+#   --dry-run is NOT free: 1 STT + 1 title/tag LLM call per eligible note
 ```
 
 ## Conventions
@@ -66,6 +77,10 @@ secret-run npm run retranscribe -- --all --dry-run   # recover any failed transc
 - **Filename is code-sanitized, never LLM-controlled**; byte-capped ≤200 bytes (APFS limit).
 - **ACK only after persistence** (`store.appendBlock`/`saveAttachment` resolve first).
 - **LLM/STT/vision must degrade gracefully** — a failure never loses input; `/done` can be retried.
+- **`finalizeDigest` holds the store's per-chat lock across read → compile → write → clear**
+  (`withPendingDigest`). Splitting those across separate locks lets a straggler transcript's
+  `updateBlock` succeed — telling the user the words were saved — into a manifest that was
+  already compiled without them and is about to be deleted.
 - **All transcription goes through `transcribe()` in `src/stt.js`** — never call a vendor
   directly. Retry/rotation/attempt-cap are data-driven from `config.js`; add a vendor in
   `stt-providers.js` and name it in `STT_PROVIDER_ORDER`.

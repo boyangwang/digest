@@ -131,7 +131,7 @@ test("/done waits for an in-flight transcription before compiling", async () => 
 
 test("/done still completes when the wait bound is hit, and the note carries the marker", async () => {
   const CHAT = 9004;
-  const { reply } = collector();
+  const { sent, reply } = collector();
   const { stt, release } = gatedTransport("太晚了 too late");
 
   const { transcription } = await ingestVoice(CHAT, { buffer: AUDIO, mime: "audio/ogg" }, reply, { stt });
@@ -149,4 +149,14 @@ test("/done still completes when the wait bound is hit, and the note carries the
   release();
   await transcription;
   assert.equal(await store.loadPending(CHAT), null, "a late transcript must not recreate the compiled digest");
+
+  // And the user must be told the truth: the words arrived too late for this note,
+  // NOT that they were saved into a note that carries the failure marker.
+  const last = sent[sent.length - 1];
+  assert.match(last, /arrived after the note was compiled/);
+  assert.match(last, /太晚了 too late/, "the words themselves are still handed back");
+  assert.ok(
+    !sent.some((m) => m.startsWith("🎙️ 已转写")),
+    "a straggler must never claim the transcript was written into the note"
+  );
 });

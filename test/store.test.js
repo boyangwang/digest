@@ -59,3 +59,42 @@ test("saveAttachment persists a staged file", async () => {
   assert.equal(readFileSync(p, "utf8"), "audio");
   await store.clearPending(CHAT5);
 });
+
+test("withPendingDigest holds the lock across read → clear, so no straggler lands mid-compile", async () => {
+  // The finalize race: reading the manifest and clearing it under SEPARATE locks
+  // leaves a window where a late transcript's updateBlock succeeds (so the user is
+  // told the words were saved) while the note being written was compiled from the
+  // copy read before that write, and the clear then discards it.
+  const CHAT6 = 99001;
+  await store.appendBlock(CHAT6, { type: "voice" });
+
+  let sawTranscript = "unset";
+  const compile = store.withPendingDigest(CHAT6, async (manifest, { clear }) => {
+    sawTranscript = manifest.blocks[0].transcript ?? null;
+    await new Promise((r) => setTimeout(r, 20)); // stands in for LLM + note write
+    await clear();
+    return "compiled";
+  });
+  // The straggler tries to land while that section is open.
+  const late = store.updateBlock(CHAT6, 0, { transcript: "late words 迟到的字" });
+
+  assert.equal(await compile, "compiled");
+  assert.equal(sawTranscript, null, "the section saw a consistent manifest");
+  assert.equal(await late, null, "a straggler must be told the digest is gone, not that it saved");
+  assert.equal(await store.loadPending(CHAT6), null, "and it must not resurrect the manifest");
+});
+
+test("a transcript that beats finalize to the lock IS in the manifest it compiles", async () => {
+  const CHAT7 = 99002;
+  await store.appendBlock(CHAT7, { type: "voice" });
+  const early = store.updateBlock(CHAT7, 0, { transcript: "in time 及时" });
+
+  let seen;
+  await store.withPendingDigest(CHAT7, async (manifest, { clear }) => {
+    seen = manifest.blocks[0].transcript;
+    await clear();
+  });
+  await early;
+  assert.equal(seen, "in time 及时", "the other ordering must keep the words");
+});
+
