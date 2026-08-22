@@ -81,6 +81,9 @@ bash launchd/deploy.sh            # deploy launchd network.deardiary.digest
 tail -f ~/.local/share/digest/digest.log   # NEVER /tmp — macOS purges it under the running service
 secret-run npm run retranscribe -- --check           # FREE census: eligible vs refused notes
 #   eligible = carries GENERATOR生成器 stamp AND a failed-transcript marker
+#   --check NAMES any refused note that still carries a marker — the only refusal
+#   that is actionable ("needs recovery, not ours to touch"); the un-marked bulk is
+#   only counted, never listed.
 secret-run npm run retranscribe -- --all             # recover any failed transcript
 #   --dry-run is NOT free: 1 STT + 1 title/tag LLM call per eligible note
 ```
@@ -97,6 +100,10 @@ secret-run npm run retranscribe -- --all             # recover any failed transc
 - **All transcription goes through `transcribe()` in `src/stt.js`** — never call a vendor
   directly. Retry/rotation/attempt-cap are data-driven from `config.js`; add a vendor in
   `stt-providers.js` and name it in `STT_PROVIDER_ORDER`.
+- **The log is private and bounded** (`src/log.js`): created mode 0600 in a 0700 dir and
+  size-capped with `LOG_MAX_BYTES`/`LOG_RETAIN` rotation, because it deliberately records raw
+  model output (that is what makes an unparseable response diagnosable) and so holds
+  journal-derived content. Rotation must never throw — logging never crashes the bot.
 - **Never default a log or state path under `/tmp`** — macOS purges it while launchd holds the
   handle, so the history goes to a deleted inode. `DATA_DIR` is the durable home. Corollary:
   **tests must never write to the real log** — `test/setup.mjs` pins `DIGEST_LOG_PATH`.

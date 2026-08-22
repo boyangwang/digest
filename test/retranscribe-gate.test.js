@@ -13,7 +13,13 @@ import { mkdtempSync, writeFileSync, readFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parse as yamlParse } from "yaml";
-import { runRecovery, checkNotes, classifyNote, REFUSAL } from "../scripts/retranscribe.mjs";
+import {
+  runRecovery,
+  checkNotes,
+  classifyNote,
+  rewriteFrontmatter,
+  REFUSAL,
+} from "../scripts/retranscribe.mjs";
 import { GENERATOR_KEY, GENERATOR_STAMP } from "../src/provenance.js";
 
 const P = "Heresy-Anthology/digest/ATTACHMENTS";
@@ -358,7 +364,7 @@ test("a missing digest folder is reported, not thrown", async () => {
     ...stubs(),
     out: { log() {}, error: (m) => errors.push(String(m)) },
   });
-  assert.deepEqual(result, { recovered: 0, refused: 0, failed: 0 });
+  assert.deepEqual(result, { recovered: 0, previewed: 0, refused: 0, failed: 0 });
   assert.ok(errors.some((e) => e.includes("cannot read")));
 });
 
@@ -389,4 +395,85 @@ test("a Chinese-only title with no tags is a REAL answer, not a fallback", async
   });
   const md = readFileSync(join(dir, "20260102-0910 empty.md"), "utf8");
   assert.match(md, /TITLE标题: 只有中文的标题/, "shape must not be mistaken for the fallback");
+});
+
+// ---------------------------------------------------------------------------
+// Reporting: the refusals that need a human must be visible BY NAME
+// ---------------------------------------------------------------------------
+
+test("--check names marked-but-refused notes and does NOT claim un-marked ones carry a marker", async () => {
+  // The real folder is ~494 frontmatter-less notes; a per-note line for that whole
+  // bucket would drown the census, and claiming each one "carries a marker" is false.
+  const files = { "20260102-0910 blocked.md": unstampedMarked("a-voice.ogg") };
+  for (let i = 0; i < 15; i++) files[`2026010${i % 9}-11${String(i).padStart(2, "0")} hand-${i}.md`] = handWritten(i);
+
+  const dir = fixture(files);
+  const lines = [];
+  const { eligible, refused, blocked } = await checkNotes({
+    digestDir: dir,
+    out: { log: (m) => lines.push(String(m)), error: (m) => lines.push(String(m)) },
+  });
+  const text = lines.join("\n");
+
+  assert.equal(eligible.length, 0);
+  assert.equal(refused.length, 16);
+  assert.deepEqual(blocked.map((n) => n.marked).flat(), ["a-voice.ogg"]);
+
+  // The one actionable refusal is named…
+  assert.match(text, /20260102-0910 blocked\.md/);
+  assert.match(text, /NEED recovery but are refused/);
+  // …and the un-marked bulk is counted, never named, never mislabelled.
+  assert.ok(!text.includes("hand-0.md"), "the un-marked bulk must not be listed per note");
+  assert.ok(
+    !/hand-\d+\.md carries a marker/.test(text),
+    "a note with no marker must never be described as carrying one"
+  );
+});
+
+test("--all names a marked-but-unstamped note instead of skipping it in silence", async () => {
+  // "This note needs recovery and I may not touch it" is the only refusal the captain
+  // can act on, so it must never be silent.
+  const dir = fixture({
+    "20260102-0910 blocked.md": unstampedMarked("a-voice.ogg"),
+    "20260304-0506 ok.md": botNoMarker,
+    "20260101-0101 hand.md": handWritten("one"),
+  });
+  const errors = [];
+  const result = await runRecovery({
+    digestDir: dir,
+    attachmentsDir: dir,
+    ...stubs(),
+    out: { log() {}, error: (m) => errors.push(String(m)) },
+  });
+  const text = errors.join("\n");
+
+  assert.equal(result.refused, 1, "exactly the marked-but-unstamped note is announced");
+  assert.match(text, /20260102-0910 blocked\.md/);
+  assert.match(text, /DOES carry a failure marker/);
+  assert.ok(!text.includes("20260304-0506 ok.md"), "a stamped note with nothing to do stays quiet");
+  assert.ok(!text.includes("20260101-0101 hand.md"), "the hand-written bulk stays quiet");
+});
+
+test("--dry-run reports what it previewed instead of claiming there was nothing to do", async () => {
+  const dir = fixture({ "20260102-0910 empty.md": eligibleNote("a-voice.ogg") });
+  const before = bytes(dir);
+  const result = await runRecovery({ dryRun: true, digestDir: dir, attachmentsDir: dir, ...stubs() });
+
+  assert.deepEqual(bytes(dir), before, "a dry run still writes nothing");
+  assert.equal(result.recovered, 0, "nothing was committed");
+  assert.equal(result.previewed, 1, "but the preview is counted, so the summary cannot contradict it");
+});
+
+test("GUARD — rewriteFrontmatter can never MANUFACTURE a provenance stamp", async () => {
+  // The stamp is what makes a note ours to edit and directive 3 gives it no override,
+  // so this helper must be structurally incapable of adding one to a note that lacks
+  // it — not merely unreachable from the gated call path.
+  const unstamped = unstampedMarked("a-voice.ogg");
+  for (const replaceAll of [false, true]) {
+    const { markdown } = rewriteFrontmatter(unstamped, "新标题 New title", [{ key: "Category分类", value: "X" }], {
+      replaceAll,
+    });
+    assert.ok(!markdown.includes(GENERATOR_KEY), `no stamp may appear (replaceAll=${replaceAll})`);
+    assert.equal(classifyNote(markdown).reason, REFUSAL.NO_STAMP, "and the note stays ineligible");
+  }
 });

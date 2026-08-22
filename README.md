@@ -35,6 +35,7 @@ LLM-generated title and tags. "Dear diary", multimodal.
 | `transcriptions.js` | in-flight transcriptions per chat; what `/done` waits on |
 | `retry.js` | the shared attempt ladder (attempts, rotation, backoff, budget) |
 | `provenance.js` | the `GENERATOR生成器` stamp: who created a note, and may we edit it |
+| `log.js` | stdout + a private (0600), size-capped, rotating log file |
 | `store.js` | pending digest on disk (ordered, atomic, crash-safe) |
 | `finalize.js` | `/done`: assemble → title/tags → move attachments → compile → write |
 | `compile.js` | ordered blocks + metadata → final markdown + filename (pure) |
@@ -73,7 +74,8 @@ secret-run npm run retranscribe -- "20260102-091100-1-voice.ogg"   # or just one
 ```
 
 `--check` is the safe probe: it classifies the folder and makes **no** network call and
-**no** write. `--dry-run` is **not** free - it performs one live STT call and one title/tag
+**no** write. It names every refused note that still carries a failure marker - the one
+refusal you can act on - and only counts the un-marked rest, which is most of the folder. `--dry-run` is **not** free - it performs one live STT call and one title/tag
 LLM call per eligible note, because previewing the real recovered text and the real
 proposed title is the point of a dry run.
 

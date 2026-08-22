@@ -111,3 +111,16 @@ export const FILENAME_TITLE_MAX_BYTES = 200;
 // history silently disappears (observed: pid holding /tmp/digest.log with NLINK=0).
 // DATA_DIR is already the durable home for state that must survive a purge.
 export const LOG_PATH = process.env.DIGEST_LOG_PATH || join(DATA_DIR, "digest.log");
+
+/**
+ * The log deliberately records raw model output when a response will not parse — the
+ * actual bytes are the only thing that explains why — so it holds journal-derived
+ * content and must be both private (mode 0600, see `src/log.js`) and BOUNDED.
+ *
+ * Rotation keeps history rather than discarding it: the whole point of moving off
+ * /tmp was that a purge destroyed the history that would have answered the original
+ * failure. Worst-case footprint with these defaults: one active file at the cap plus
+ * LOG_RETAIN rotated files = 8 MiB × (1 + 12) = 104 MiB.
+ */
+export const LOG_MAX_BYTES = Number(process.env.DIGEST_LOG_MAX_BYTES || 8 * 1024 * 1024);
+export const LOG_RETAIN = Number(process.env.DIGEST_LOG_RETAIN || 12);

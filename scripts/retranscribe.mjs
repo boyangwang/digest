@@ -56,7 +56,7 @@ import { join, basename, isAbsolute } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseDocument } from "yaml";
 import { DIGEST_DIR, ATTACHMENTS_DIR, ATTACHMENTS_VAULT_PREFIX } from "../src/config.js";
-import { GENERATOR_KEY, GENERATOR_STAMP, isGeneratedByDigest } from "../src/provenance.js";
+import { GENERATOR_KEY, isGeneratedByDigest } from "../src/provenance.js";
 import { blockquote } from "../src/compile.js";
 import { buildLLMInput, freeNotePath } from "../src/finalize.js";
 import { generateTitleAndTags } from "../src/llm.js";
@@ -249,9 +249,12 @@ export function rewriteFrontmatter(markdown, fullTitle, tags, { replaceAll = fal
     out = parseDocument("");
     out.contents = out.createNode({});
     if (before.CREATEDAT != null) out.set("CREATEDAT", before.CREATEDAT);
-    // The provenance stamp survives a rebuild too: dropping it would make the note
-    // ineligible for every future run — the same stranding this round exists to fix.
-    out.set(GENERATOR_KEY, before[GENERATOR_KEY] ?? GENERATOR_STAMP);
+    // An existing provenance stamp survives a rebuild — dropping it would make the
+    // note ineligible for every future run. But it is only ever COPIED, never
+    // synthesised: this helper takes an arbitrary markdown string, so manufacturing a
+    // stamp here would be a way to make an unstamped note eligible, and directive 3
+    // says that gate has no override.
+    if (before[GENERATOR_KEY] != null) out.set(GENERATOR_KEY, before[GENERATOR_KEY]);
     for (const [k, v] of writes) if (!out.has(k)) out.set(k, v);
   } else {
     out = doc;
@@ -387,13 +390,19 @@ export async function checkNotes({ digestDir = DIGEST_DIR, out = console } = {})
   for (const n of refused) byReason.set(n.reason, (byReason.get(n.reason) || 0) + 1);
   if (byReason.size) out.log("");
   for (const [reason, count] of byReason) out.log(`  – refused ${count}: ${reason}`);
-  for (const n of refused) {
-    if (n.reason === REFUSAL.NO_FRONTMATTER) {
-      out.log(`      ${basename(n.path)} carries a marker but has no frontmatter — left completely alone`);
+
+  // Name only the refusals that are actionable: a note carrying a failure marker that
+  // this tool may not touch is something the captain can decide about. The un-marked
+  // bulk is most of the folder and naming it would drown the census.
+  const blocked = refused.filter((n) => n.marked.length > 0);
+  if (blocked.length) {
+    out.log(`\n  ⚠  ${blocked.length} note(s) NEED recovery but are refused — decide by hand:`);
+    for (const n of blocked) {
+      out.log(`      ${basename(n.path)}\n        marked: ${n.marked.join(", ")}\n        why: ${n.reason}`);
     }
   }
-  out.log(`\n${eligible.length} eligible, ${refused.length} refused.`);
-  return { eligible, refused };
+  out.log(`\n${eligible.length} eligible, ${refused.length} refused (${blocked.length} of them marked).`);
+  return { eligible, refused, blocked };
 }
 
 /**
@@ -403,7 +412,6 @@ export async function checkNotes({ digestDir = DIGEST_DIR, out = console } = {})
  */
 export async function runRecovery({
   targets = [],
-  all = false,
   dryRun = false,
   rename = false,
   replaceProperties = false,
@@ -419,6 +427,7 @@ export async function runRecovery({
   const notes = await listNotes(digestDir, out);
   const transcripts = new Map(); // attachment name → result, so one file is fetched once
   let recovered = 0;
+  let previewed = 0;
   let refusedNamed = 0;
   let failed = 0;
 
@@ -432,11 +441,18 @@ export async function runRecovery({
         wanted && [...wanted].some((n) => original.includes(`![[${ATTACHMENTS_VAULT_PREFIX}/${n}]]`));
 
       if (!verdict.eligible) {
-        // On --all, "no marker" and "not ours" are simply "not a candidate" and would
-        // drown the output (most of the folder is hand-written); --check reports the
-        // full census. A named target must always hear why it was refused.
-        if (embedsWanted) {
-          out.error(`\n✗ REFUSED ${label}: ${verdict.reason}\n  Nothing was read, sent to a vendor, or written for this note.`);
+        // A note carrying a failure marker that we may not touch is the ONE refusal
+        // worth interrupting for: it needs recovery and only the captain can unblock
+        // it. Un-marked notes are simply not candidates — they are most of the folder
+        // and naming them would drown the output; `--check` reports the full census.
+        if (embedsWanted || verdict.marked.length > 0) {
+          out.error(
+            `\n✗ REFUSED ${label}: ${verdict.reason}\n` +
+              (verdict.marked.length
+                ? `  It DOES carry a failure marker (${verdict.marked.join(", ")}), so it needs recovery — decide by hand.\n`
+                : "") +
+              `  Nothing was read, sent to a vendor, or written for this note.`
+          );
           refusedNamed++;
         }
         continue;
@@ -487,6 +503,7 @@ export async function runRecovery({
 
       if (dryRun) {
         out.log(`  · ${label}: would replace ${patched} marker(s) and rewrite the above (CREATEDAT never regenerated) [--dry-run]`);
+        previewed++;
         continue;
       }
 
@@ -516,7 +533,7 @@ export async function runRecovery({
       }
     }
   }
-  return { recovered, refused: refusedNamed, failed };
+  return { recovered, previewed, refused: refusedNamed, failed };
 }
 
 // Run only as a CLI — tests import the exported helpers directly.
@@ -545,16 +562,24 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     process.exit(2);
   }
 
+  const dryRun = flag("--dry-run");
   const result = await runRecovery({
     targets,
-    all: flag("--all"),
-    dryRun: flag("--dry-run"),
+    dryRun,
     rename: flag("--rename"),
     replaceProperties: flag("--replace-properties"),
   });
-  if (!result.recovered && !result.refused && !result.failed) {
-    console.log("No eligible note carries a transcription-failure marker. Nothing to recover.");
+
+  const touched = result.recovered + result.previewed;
+  if (!touched && !result.refused && !result.failed) {
+    console.log("\nNo eligible note carries a transcription-failure marker. Nothing to recover.");
     console.log("(`--check` lists what is eligible and why each other note was refused.)");
+  } else {
+    const verb = dryRun ? "would recover" : "recovered";
+    console.log(
+      `\n${verb} ${touched} note(s); ${result.failed} failed, ${result.refused} refused.` +
+        (dryRun ? " Nothing was written [--dry-run]." : "")
+    );
   }
   process.exit(result.failed || result.refused ? 1 : 0);
 }
