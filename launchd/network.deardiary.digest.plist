@@ -29,9 +29,16 @@
   <key>KeepAlive</key>
   <true/>
 
+  <!-- launchd gets its OWN file, distinct from the app's LOG_PATH
+       (DATA_DIR/digest.log). They must never be the same path again: sharing one
+       inode means the app's rename-based rotation moves the file out from under
+       launchd's fd, and the crash output that bypasses the logger is exactly what
+       then goes missing. This file is the net for whatever escapes the logger — if
+       it is non-empty, read it. Durable dir, never /tmp: macOS purges /tmp and
+       launchd keeps writing to the now-unlinked inode. -->
   <key>StandardOutPath</key>
-  <string>/tmp/digest.log</string>
+  <string>/Users/claw/.local/share/digest/digest-service.log</string>
   <key>StandardErrorPath</key>
-  <string>/tmp/digest.log</string>
+  <string>/Users/claw/.local/share/digest/digest-service.log</string>
 </dict>
 </plist>

@@ -3,10 +3,13 @@
   "version": "1.2.0",
   "description": "Digest — Telegram bot that compiles multimodal inputs into a single bilingual Obsidian note (dear diary).",
   "type": "module",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "start": "node src/index.js",
-    "test": "node --test test/*.test.js"
+    "test": "node --import ./test/setup.mjs --test test/*.test.js",
+    "retranscribe": "node scripts/retranscribe.mjs"
   },
   "dependencies": {
     "grammy": "^1.30.0",
