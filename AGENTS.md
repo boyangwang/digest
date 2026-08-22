@@ -1,15 +1,17 @@
-# CLAUDE.md — Digest (v1.2)
+# AGENTS.md — Digest (v1.2)
+
+`CLAUDE.md` is a symlink to this file - edit this one.
 
 ## 📍 Status + Next Steps · (updated 2026-08-21)
 - **Working on:** Digest v1.2 — DONE. Multimodal Telegram capture → one bilingual Obsidian note.
   v1.2.1 adds transcription durability (retry + vendor rotation + durable log + recovery script).
-- **Status:** ✅ Shipped. 52/52 tests green; all 3 live APIs verified; Boyang UAT passed ("pretty good"); deployed to launchd `network.deardiary.digest`; pushed to `origin/main`.
+- **Status:** ✅ Shipped. `npm test` green (count deliberately not pinned here - it drifts); all 3 live APIs verified; Boyang UAT passed ("pretty good"); deployed to launchd `network.deardiary.digest`; pushed to `origin/main`.
 - **Done recently:** JS rewrite; reusable title prompt from 552 vault titles; UAT fixes (serial# on every msg, ACK+Done button, IM inline timestamps, always-`TITLE标题`); deploy.
 - **Known blockers:** Obsidian **must stay running on the mini** for Sync to propagate notes to phone (it's a server; Sync only runs while the app is open) — offered to add a keep-alive, pending Boyang's call. Vision caption ~15s/image (acceptable).
 - **Next step:** captain must `bash launchd/deploy.sh` (or reload `network.deardiary.digest`).
   The plist now carries TWO changes needing that reload: the durable log path AND the split of
   launchd's stdout/stderr onto `digest-service.log`. A plist edit alone does nothing to a
-  running service; until it is reloaded, launchd still writes to `digest.log`.
+  running service; until it is reloaded, launchd still writes to the OLD `/tmp/digest.log`.
 
 ### Log (newest first)
 - 2026-08-21 — v1.2.1 review round: transcription moved off the per-chat queue (+ per-chat
@@ -29,7 +31,7 @@
    re-verified 2026-08-21. OpenAI needs no new credential: `OPENAI_API_KEY` is already in the
    same sops store the launchd service loads. LLM = **TokenHub** `glm-5.2` (title+tags) + `glm-5v-turbo` (vision), via the `openai` npm client pointed at TokenHub (NOT openai.com).
 4. Title = deterministic `YYYYMMDD-HHMM` + LLM title, **summarizing in Boyang's voice, bilingual `<zh> <en>`**, code-sanitized + byte-capped (≤200 bytes for the title portion). Full title always mirrored in `TITLE标题`.
-5. Properties = **dynamic, LLM-chosen** bilingual `English中文` tags (NOT a fixed schema) + always `CREATEDAT: YYYY-MM-DD HH:MM:SS` + always `TITLE标题`.
+5. Properties = **dynamic, LLM-chosen** bilingual `English中文` tags (NOT a fixed schema) + always `CREATEDAT: YYYY-MM-DD HH:MM:SS` + always `TITLE标题` (+ the provenance stamp, decision 12).
 6. Two Telegram replies per input, both carrying the serial `#N`; ACK = `✓ ACK #N` with the inline Done button attached; ACK is atomic-with-persistence; per-chat serial queue = linear/deterministic.
 7. Body blocks use IM-style **inline** timestamps: `**MM-DD HH:MM** content` (same line, month-day-hour-minute).
 8. **Transcription runs OUTSIDE the per-chat serial queue** (`src/transcriptions.js`). The
@@ -44,10 +46,10 @@
    `--rename` opts in.
 10. **The recovery script's eligibility gate is a hard precondition.** Measured 2026-08-22: of
    577 notes in the digest folder, 494 have NO frontmatter (hand-written), 63 carry a legacy
-   `创建时间`/`分类`/`主题` schema, 19 carry the current schema. A note is touched ONLY if it
-   carries the failed-transcript marker AND already has frontmatter; everything else is refused
-   with a reason and zero bytes changed. Never create frontmatter, never migrate a legacy note,
-   never let an explicitly named attachment bypass the gate.
+   `创建时间`/`分类`/`主题` schema, 19 carry the current schema - i.e. the folder is mostly NOT
+   ours. The gate itself is decision 12 (stamp AND marker); everything else is refused with a
+   reason and zero bytes changed. Never create frontmatter, never migrate a legacy note, never
+   let an explicitly named attachment bypass the gate.
 11. Frontmatter rewriting **MERGES** into the existing block (`parseDocument`): only `TITLE标题`
    and the generated tag keys are written. Hand-added keys keep their VALUES and comments —
    but yaml v2 re-serializes the block, so layout may be normalized (`aliases:\n- x` comes back
@@ -72,7 +74,7 @@ Markdown note in the Obsidian vault. See `README.md` and `specs/prd-digest-v1.2.
 Node ≥22 (ESM), grammY, `openai` client → Tencent TokenHub, `yaml`. STT = ElevenLabs Scribe v2
 → OpenAI `gpt-4o-transcribe` (plain `fetch`/`FormData`, no SDK).
 Tests: `node --test` via `npm test`, which loads `test/setup.mjs` with `--import` to pin
-`DIGEST_LOG_PATH` at a temp dir — otherwise the suite appends to the live service log.
+`DIGEST_LOG_PATH` at a temp dir — otherwise the suite appends to the live app log.
 
 ## Key commands
 ```bash

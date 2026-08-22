@@ -22,7 +22,8 @@ LLM-generated title and tags. "Dear diary", multimodal.
 3. Tap **✅ Done** or send `/done` → the bot compiles everything into one note:
    - **Title** = `YYYYMMDD-HHMM` (deterministic) + a longer, summarizing bilingual title in
      your voice (`glm-5.2`), sanitized by code.
-   - **Properties** = dynamic bilingual tags (`glm-5.2`) + `CREATEDAT` + full `TITLE标题`.
+   - **Properties** = dynamic bilingual tags (`glm-5.2`) + `CREATEDAT` + full `TITLE标题` +
+     `GENERATOR生成器: digest/1` (the provenance stamp that marks the note as this bot's).
    - Images are captioned by `glm-5v-turbo` so the title/tags reflect them.
 
 ## Architecture (`src/`)

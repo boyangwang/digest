@@ -1,6 +1,9 @@
 # PRD — Digest v1.2 (multimodal capture → single Obsidian note)
 
 > **Status:** 🟢 SHIPPED 2026-07-07 — implemented, UAT passed, deployed (`network.deardiary.digest`).
+> **Superseded in part by v1.2.1** (STT vendor rotation, the `GENERATOR生成器` provenance
+> property, the durable log path). This file is the record of the v1.2 decisions as of
+> 2026-07-07, not current behaviour - for that read `README.md` and `AGENTS.md`.
 > **Created:** 2026-07-07
 > **Big pivot:** v1.2 is a **JavaScript (Node) rewrite** — treat as an almost-new project, reusing
 > only the Telegram-bot idea. Same repo (`digest`); old Python archived to a branch.
