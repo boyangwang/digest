@@ -33,6 +33,7 @@ import {
   STT_TOTAL_BUDGET_MS,
 } from "./config.js";
 import { resolveProviders, SttHttpError, SttEmptyError } from "./stt-providers.js";
+import { runWithRetry, backoffMs as ladderBackoffMs, truncate } from "./retry.js";
 import { log } from "./log.js";
 
 /** Failure reasons. Persisted into the block, so treat them as a stable contract. */
@@ -44,8 +45,6 @@ export const STT_FAIL = {
   REJECTED: "rejected", // every vendor refused us (auth/permission)
   EXHAUSTED: "exhausted", // transient failures all the way to the attempt cap
 };
-
-const truncate = (s, n = 300) => String(s ?? "").replace(/\s+/g, " ").slice(0, n);
 
 /**
  * Decide what an attempt's failure means for the loop.
@@ -71,13 +70,10 @@ export function classify(err) {
   return { action: "retry" };
 }
 
-/** base * 2^(n-1), capped, then jittered ±25%. `n` is 1-based. */
-export function backoffMs(n, { base = STT_BACKOFF_BASE_MS, max = STT_BACKOFF_MAX_MS, rand = Math.random } = {}) {
-  const flat = Math.min(base * 2 ** (n - 1), max);
-  return Math.round(flat * (0.75 + rand() * 0.5));
+/** base * 2^(n-1), capped, then jittered ±25%, with the STT ladder's defaults. */
+export function backoffMs(n, opts = {}) {
+  return ladderBackoffMs(n, { base: STT_BACKOFF_BASE_MS, max: STT_BACKOFF_MAX_MS, ...opts });
 }
-
-const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /**
  * Transcribe an audio file, surviving transient vendor failure.
@@ -90,9 +86,9 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 export async function transcribe(audioPath, opts = {}) {
   const {
     fetchImpl = globalThis.fetch,
-    sleepImpl = wait,
-    now = () => Date.now(),
-    rand = Math.random,
+    sleepImpl,
+    now,
+    rand,
     maxAttempts = STT_MAX_ATTEMPTS,
     attemptTimeoutMs = STT_ATTEMPT_TIMEOUT_MS,
     totalBudgetMs = STT_TOTAL_BUDGET_MS,
@@ -122,69 +118,30 @@ export async function transcribe(audioPath, opts = {}) {
   }
   const audio = { buffer, filename: basename(audioPath), mime };
 
-  const startedAt = now();
-  let cursor = 0;
-  let attempts = 0;
-  let lastError = null;
-  let stopReason = null;
+  const r = await runWithRetry({
+    label: "stt",
+    providers: live,
+    call: (provider, { timeoutMs }) => provider.request(audio, { timeoutMs, fetchImpl }),
+    classify,
+    describe: (err) => ({
+      status: err instanceof SttHttpError ? err.status : err?.name === "SttEmptyError" ? 200 : 0,
+      detail: err instanceof SttHttpError ? err.body : err?.message,
+    }),
+    summarize: (out) => `chars=${out.text.length} lang=${out.language || "?"}`,
+    maxAttempts,
+    attemptTimeoutMs,
+    totalBudgetMs,
+    backoffBaseMs: STT_BACKOFF_BASE_MS,
+    backoffMaxMs: STT_BACKOFF_MAX_MS,
+    exhaustedReason: STT_FAIL.EXHAUSTED,
+    rejectedReason: STT_FAIL.REJECTED,
+    ...(sleepImpl ? { sleepImpl } : {}),
+    ...(now ? { now } : {}),
+    ...(rand ? { rand } : {}),
+  });
 
-  for (let attempt = 1; attempt <= maxAttempts && live.length; attempt++) {
-    const elapsedTotal = now() - startedAt;
-    const remaining = totalBudgetMs - elapsedTotal;
-    if (remaining <= 0) {
-      log.warn(`stt: total budget ${totalBudgetMs}ms exhausted after ${attempts} attempt(s)`);
-      break;
-    }
-    // Rotate: with N live vendors this alternates 1,2,…,N,1,2,… across attempts.
-    const provider = live[cursor % live.length];
-    if (!providersTried.includes(provider.name)) providersTried.push(provider.name);
-    attempts = attempt;
-
-    const t0 = now();
-    try {
-      const out = await provider.request(audio, {
-        timeoutMs: Math.min(attemptTimeoutMs, remaining),
-        fetchImpl,
-      });
-      log.info(
-        `stt attempt ${attempt}/${maxAttempts} provider=${provider.name} status=200 ` +
-          `elapsed=${now() - t0}ms chars=${out.text.length} lang=${out.language || "?"}`
-      );
-      return { ok: true, text: out.text, language: out.language, provider: provider.name, attempts };
-    } catch (err) {
-      const status = err instanceof SttHttpError ? err.status : err?.name === "SttEmptyError" ? 200 : 0;
-      const detail = err instanceof SttHttpError ? err.body : err?.message;
-      lastError = `${provider.name}: ${truncate(detail)}`;
-      log.warn(
-        `stt attempt ${attempt}/${maxAttempts} provider=${provider.name} status=${status || "-"} ` +
-          `elapsed=${now() - t0}ms error="${truncate(detail, 300)}"`
-      );
-
-      const { action, reason } = classify(err);
-      if (action === "stop") {
-        stopReason = reason;
-        break;
-      }
-      if (action === "drop-vendor") {
-        // Removing at `cursor % live.length` leaves the cursor pointing at the
-        // NEXT live vendor, so no attempt is wasted re-picking the dead one.
-        live.splice(cursor % live.length, 1);
-        stopReason = reason; // only survives if no other vendor works out
-        continue; // a different vendor needs no cool-off
-      }
-      stopReason = null;
-      cursor += 1; // transient → rotate to the next vendor for the next attempt
-      if (attempt < maxAttempts && live.length) {
-        const nap = Math.min(backoffMs(attempt, { rand }), Math.max(0, totalBudgetMs - (now() - startedAt)));
-        if (nap > 0) await sleepImpl(nap);
-      }
-    }
+  if (r.ok) {
+    return { ok: true, text: r.value.text, language: r.value.language, provider: r.provider, attempts: r.attempts };
   }
-
-  const reason = stopReason || (live.length ? STT_FAIL.EXHAUSTED : STT_FAIL.REJECTED);
-  log.error(
-    `stt: giving up after ${attempts} attempt(s) across [${providersTried.join(", ")}] ` +
-      `reason=${reason} last="${truncate(lastError, 200)}"`
-  );
-  return { ok: false, reason, attempts, providersTried, lastError };
+  return { ok: false, reason: r.reason, attempts: r.attempts, providersTried: r.providersTried, lastError: r.lastError };
 }

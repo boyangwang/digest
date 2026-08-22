@@ -15,15 +15,23 @@
 //   npm run retranscribe -- --all --rename          # …and rename the file on disk too
 //
 // ELIGIBILITY IS A HARD PRECONDITION, checked before a note is read for rewriting
-// and before any STT or LLM call is made for it. The digest folder is NOT all
-// bot-produced notes: most of it is hand-written, correctly carries no frontmatter,
-// and must stay that way. A note qualifies ONLY if it carries this bot's
-// failed-transcript marker — the `> [Transcription unavailable…` blockquote line
-// directly under an ATTACHMENTS embed — AND already has frontmatter. Everything
-// else is refused with a reason and ZERO bytes changed: no frontmatter is ever
-// created, no un-marked note is rewritten however stale its metadata looks, and no
-// legacy-schema note is migrated as a side effect. Naming an attachment explicitly
-// does not bypass the gate.
+// and before any STT or LLM call is made for it. A note qualifies ONLY if BOTH:
+//   (a) it carries this program's PROVENANCE STAMP (src/provenance.js) — "is this
+//       ours to touch"; and
+//   (b) it carries the failed-transcript marker, the `> [Transcription unavailable…`
+//       blockquote line directly under an ATTACHMENTS embed — "does it need this
+//       work". Both the original bare form and the current richer one count.
+// Neither substitutes for the other, and there is NO override flag for (a): no flag,
+// env var or config field may make an unstamped note eligible. The digest folder is
+// mostly hand-written, correctly carries no frontmatter, and must stay that way, so
+// anything missing either condition is refused with a reason and ZERO bytes changed —
+// no frontmatter is ever created, no un-marked note is rewritten however stale its
+// metadata looks, and no legacy-schema note is migrated as a side effect. Naming an
+// attachment explicitly does not bypass the gate.
+//
+// Notes written before the stamp existed are therefore untouchable, and that is the
+// correct outcome: acting on them would mean inferring provenance from state, which
+// is exactly what the stamp replaces.
 //
 // Why regenerate the metadata for an eligible note: `buildLLMInput` feeds every
 // block to the title model together at /done time, substituting "(no transcript)"
@@ -31,7 +39,15 @@
 // never included these words. Recovering the transcript without redoing that pass
 // leaves the frontmatter contradicting the body. The rewrite MERGES: TITLE标题 and
 // the generated tag keys are replaced, CREATEDAT and every other pre-existing key
-// (a hand-added `aliases`, `cssclasses`, Dataview field…) are left alone.
+// (a hand-added `aliases`, `cssclasses`, Dataview field…) are kept.
+//
+// ONE ATOMIC WRITE commits the transcript and the regenerated metadata together, so
+// a note only ever moves between two consistent states: untouched with its marker
+// intact and still eligible, or fully recovered. If the title model gives up, the
+// recovered transcript is DISCARDED rather than committed — it is not lost data (the
+// audio is still in the vault, the marker survives, a re-run redoes it at the cost of
+// one STT call), whereas committing it would consume the marker and strand the note
+// with metadata this tool could never fix again.
 //
 // It goes through the SAME src/stt.js retry+rotation loop the bot uses, so running
 // it is also a live check that the loop works.
@@ -40,6 +56,7 @@ import { join, basename, isAbsolute } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseDocument } from "yaml";
 import { DIGEST_DIR, ATTACHMENTS_DIR, ATTACHMENTS_VAULT_PREFIX } from "../src/config.js";
+import { GENERATOR_KEY, GENERATOR_STAMP, isGeneratedByDigest } from "../src/provenance.js";
 import { blockquote } from "../src/compile.js";
 import { buildLLMInput, freeNotePath } from "../src/finalize.js";
 import { generateTitleAndTags } from "../src/llm.js";
@@ -79,20 +96,32 @@ export function markedAttachments(markdown) {
 }
 
 export const REFUSAL = {
-  NO_MARKER: "carries no failed-transcript marker — not a note this tool may touch",
   NO_FRONTMATTER:
     "no frontmatter — a hand-written note; this tool never creates frontmatter, not even CREATEDAT",
+  NO_STAMP: `no ${GENERATOR_KEY} provenance stamp — not created by this program, so not ours to edit`,
+  NO_MARKER: "carries no failed-transcript marker — nothing here needs recovering",
 };
 
 /**
  * The gate. Nothing about a note is read for rewriting, and no vendor is called for
  * it, until this returns eligible.
+ *
+ * Provenance first, then need. There is deliberately no way to skip either check.
  * @returns {{eligible:boolean, reason:?string, marked:string[]}}
  */
 export function classifyNote(markdown) {
   const marked = markedAttachments(markdown);
+  const parts = splitNote(markdown);
+  if (!parts) return { eligible: false, reason: REFUSAL.NO_FRONTMATTER, marked };
+
+  let frontmatter;
+  try {
+    frontmatter = parseDocument(parts.frontmatterRaw).toJS();
+  } catch {
+    frontmatter = null;
+  }
+  if (!isGeneratedByDigest(frontmatter)) return { eligible: false, reason: REFUSAL.NO_STAMP, marked };
   if (!marked.length) return { eligible: false, reason: REFUSAL.NO_MARKER, marked };
-  if (!splitNote(markdown)) return { eligible: false, reason: REFUSAL.NO_FRONTMATTER, marked };
   return { eligible: true, reason: null, marked };
 }
 
@@ -194,8 +223,10 @@ export function parseNoteBlocks(body) {
  * overwrite the note's identity timestamp. `replaceAll` opts into the old
  * rebuild-from-scratch behaviour, which is the only way a key gets removed.
  *
- * The YAML is edited through the document model so untouched keys keep their
- * original formatting instead of being re-serialized.
+ * The YAML is edited through the document model, which preserves untouched keys'
+ * VALUES and any comments — but NOT their byte-for-byte layout: yaml v2 re-serializes
+ * the block, so a flat `aliases:\n- x` comes back indented and `[a, b]` comes back
+ * `[ a, b ]`. Content is safe; whitespace may be normalized.
  *
  * @returns {?{markdown:string, replaced:string[], added:string[], leftAlone:string[], removed:string[]}}
  */
@@ -206,7 +237,7 @@ export function rewriteFrontmatter(markdown, fullTitle, tags, { replaceAll = fal
   const clean = (tags || [])
     .filter((t) => t && t.key)
     .map((t) => ({ key: String(t.key).trim(), value: String(t.value ?? "").trim() }))
-    .filter((t) => t.key && t.key !== "CREATEDAT");
+    .filter((t) => t.key && t.key !== "CREATEDAT" && t.key !== GENERATOR_KEY);
 
   const doc = parseDocument(parts.frontmatterRaw);
   const before = doc.toJS() || {};
@@ -218,6 +249,9 @@ export function rewriteFrontmatter(markdown, fullTitle, tags, { replaceAll = fal
     out = parseDocument("");
     out.contents = out.createNode({});
     if (before.CREATEDAT != null) out.set("CREATEDAT", before.CREATEDAT);
+    // The provenance stamp survives a rebuild too: dropping it would make the note
+    // ineligible for every future run — the same stranding this round exists to fix.
+    out.set(GENERATOR_KEY, before[GENERATOR_KEY] ?? GENERATOR_STAMP);
     for (const [k, v] of writes) if (!out.has(k)) out.set(k, v);
   } else {
     out = doc;
@@ -242,47 +276,34 @@ const atomicWrite = async (path, text) => {
 };
 
 /**
- * Re-run the whole title/tag pass over the now-complete note. Best-effort by
- * design: the recovered transcript is already committed to disk before this runs,
- * and is never rolled back because the metadata step failed.
- * @returns {Promise<string>} the note's (possibly new) path
+ * Re-run the whole title/tag pass over the now-complete note, IN MEMORY.
+ *
+ * Writes nothing: the caller commits the transcript and this frontmatter together in
+ * one atomic write, so a failure here leaves the note byte-identical with its marker
+ * intact and still eligible for another run.
+ * @returns {Promise<{ok:true, markdown:string, fullTitle:string}|{ok:false, why:string}>}
  */
 async function regenerateMetadata(notePath, markdown, opts) {
-  const { dryRun, rename, replaceProperties, digestDir, titleImpl, out } = opts;
+  const { replaceProperties, titleImpl, out } = opts;
   const label = basename(notePath);
   const parts = splitNote(markdown);
-  const stale = (why) =>
-    out.error(`  ! ${label}: ${why} — transcript saved, TITLE标题/tags left STALE (they predate it)`);
-
-  if (!parts) {
-    stale("no frontmatter");
-    return notePath;
-  }
+  if (!parts) return { ok: false, why: "no frontmatter" };
 
   const blocks = parseNoteBlocks(parts.body);
   const llmInput = buildLLMInput(blocks);
-  if (!llmInput.trim()) {
-    stale("nothing to title");
-    return notePath;
-  }
+  if (!llmInput.trim()) return { ok: false, why: "nothing to title" };
   if (blocks.some((b) => b.type === "image")) {
     out.log(`  · ${label}: image vision captions are not stored in the note, so the new title sees only their user captions`);
   }
 
   const { title, tags, fallback } = await titleImpl(llmInput);
   // The fallback title is the input's first line. Adopting it would REPLACE a good
-  // title with a worse one, so keep what is already there and say so.
-  if (fallback) {
-    stale("title model unavailable (no key, or the request failed)");
-    return notePath;
-  }
+  // title with a worse one, and committing it would consume the marker.
+  if (fallback) return { ok: false, why: "title model gave up (no key, or every attempt failed)" };
 
   const fullTitle = glueTitle(title.zh, title.en);
   const rewritten = rewriteFrontmatter(markdown, fullTitle, tags, { replaceAll: replaceProperties });
-  if (!rewritten) {
-    stale("could not rewrite frontmatter");
-    return notePath;
-  }
+  if (!rewritten) return { ok: false, why: "could not rewrite frontmatter" };
 
   out.log(`  ✓ new title: ${fullTitle}`);
   const list = (ks) => (ks.length ? ks.join(", ") : "(none)");
@@ -292,12 +313,7 @@ async function regenerateMetadata(notePath, markdown, opts) {
   if (rewritten.removed.length) {
     out.log(`    properties REMOVED:  ${list(rewritten.removed)} [--replace-properties]`);
   }
-  if (dryRun) {
-    out.log(`  · ${label}: would rewrite the above (CREATEDAT never regenerated) [--dry-run]`);
-    return notePath;
-  }
-  await atomicWrite(notePath, rewritten.markdown);
-  return renameNote(notePath, fullTitle, { rename, digestDir, out });
+  return { ok: true, markdown: rewritten.markdown, fullTitle };
 }
 
 /**
@@ -331,14 +347,24 @@ async function renameNote(notePath, fullTitle, { rename, digestDir, out }) {
 }
 
 /** Every `.md` in the digest folder, with its current bytes. */
-async function listNotes(dir) {
-  const names = (await fs.readdir(dir)).filter((f) => f.endsWith(".md")).sort();
-  const out = [];
+async function listNotes(dir, out = console) {
+  let names;
+  try {
+    names = (await fs.readdir(dir)).filter((f) => f.endsWith(".md")).sort();
+  } catch (e) {
+    out.error(`✗ cannot read ${dir}: ${e?.message || e}`);
+    return [];
+  }
+  const notes = [];
   for (const f of names) {
     const path = join(dir, f);
-    out.push({ path, markdown: await fs.readFile(path, "utf8") });
+    try {
+      notes.push({ path, markdown: await fs.readFile(path, "utf8") });
+    } catch (e) {
+      out.error(`✗ cannot read ${f}: ${e?.message || e} — skipped`);
+    }
   }
-  return out;
+  return notes;
 }
 
 /**
@@ -346,7 +372,7 @@ async function listNotes(dir) {
  * safe way to survey a folder of hundreds of notes — `--dry-run` is not free.
  */
 export async function checkNotes({ digestDir = DIGEST_DIR, out = console } = {}) {
-  const notes = await listNotes(digestDir);
+  const notes = await listNotes(digestDir, out);
   const eligible = [];
   const refused = [];
   for (const { path, markdown } of notes) {
@@ -390,7 +416,7 @@ export async function runRecovery({
   const wanted = targets.length ? new Set(targets.map((t) => basename(audioPath(t, attachmentsDir)))) : null;
   const pathFor = new Map(targets.map((t) => [basename(audioPath(t, attachmentsDir)), audioPath(t, attachmentsDir)]));
 
-  const notes = await listNotes(digestDir);
+  const notes = await listNotes(digestDir, out);
   const transcripts = new Map(); // attachment name → result, so one file is fetched once
   let recovered = 0;
   let refusedNamed = 0;
@@ -398,63 +424,87 @@ export async function runRecovery({
 
   for (const { path: notePath, markdown: original } of notes) {
     const label = basename(notePath);
-    const verdict = classifyNote(original);
-    const embedsWanted = wanted && [...wanted].some((n) => original.includes(`![[${ATTACHMENTS_VAULT_PREFIX}/${n}]]`));
+    // One note's failure never ends the run: over hundreds of notes a locked file,
+    // a full disk or an odd frontmatter shape must cost that note only.
+    try {
+      const verdict = classifyNote(original);
+      const embedsWanted =
+        wanted && [...wanted].some((n) => original.includes(`![[${ATTACHMENTS_VAULT_PREFIX}/${n}]]`));
 
-    if (!verdict.eligible) {
-      // On --all, "no marker" is simply "not a candidate" and would drown the
-      // output (most of the folder is hand-written); --check reports the census.
-      // A named target must always hear why it was refused.
-      if (embedsWanted || (all && verdict.reason === REFUSAL.NO_FRONTMATTER)) {
-        out.error(`\n✗ REFUSED ${label}: ${verdict.reason}\n  Nothing was read, sent to a vendor, or written for this note.`);
-        refusedNamed++;
+      if (!verdict.eligible) {
+        // On --all, "no marker" and "not ours" are simply "not a candidate" and would
+        // drown the output (most of the folder is hand-written); --check reports the
+        // full census. A named target must always hear why it was refused.
+        if (embedsWanted) {
+          out.error(`\n✗ REFUSED ${label}: ${verdict.reason}\n  Nothing was read, sent to a vendor, or written for this note.`);
+          refusedNamed++;
+        }
+        continue;
       }
-      continue;
-    }
 
-    const todo = verdict.marked.filter((n) => !wanted || wanted.has(n));
-    if (!todo.length) continue;
-
-    let markdown = original;
-    let patched = 0;
-    for (const name of todo) {
-      if (!transcripts.has(name)) {
-        out.log(`\n▸ ${name}  (for ${label})`);
-        transcripts.set(name, await transcribeImpl(pathFor.get(name) ?? audioPath(name, attachmentsDir)));
+      const todo = verdict.marked.filter((n) => !wanted || wanted.has(n));
+      if (!todo.length) {
+        if (embedsWanted) {
+          out.log(`\n– ${label}: eligible, but the attachment you named carries no failure marker here — left untouched`);
+        }
+        continue;
       }
-      const r = transcripts.get(name);
-      if (!r.ok) {
-        out.error(`  ✗ still failing: reason=${r.reason} after ${r.attempts} attempt(s) via [${r.providersTried.join(", ") || "none"}]`);
-        if (r.lastError) out.error(`    last error: ${r.lastError}`);
+
+      let markdown = original;
+      let patched = 0;
+      for (const name of todo) {
+        if (!transcripts.has(name)) {
+          out.log(`\n▸ ${name}  (for ${label})`);
+          transcripts.set(name, await transcribeImpl(pathFor.get(name) ?? audioPath(name, attachmentsDir)));
+        }
+        const r = transcripts.get(name);
+        if (!r.ok) {
+          out.error(`  ✗ still failing: reason=${r.reason} after ${r.attempts} attempt(s) via [${r.providersTried.join(", ") || "none"}]`);
+          if (r.lastError) out.error(`    last error: ${r.lastError}`);
+          failed++;
+          continue;
+        }
+        out.log(`  ✓ ${r.text.length} chars via ${r.provider} (attempt ${r.attempts}, lang=${r.language || "?"})`);
+        out.log(`    ${r.text.slice(0, 120)}${r.text.length > 120 ? "…" : ""}`);
+
+        const next = replaceMarker(markdown, name, r.text);
+        if (!next.replaced) continue;
+        markdown = next.markdown;
+        patched += next.replaced;
+      }
+      if (!patched) continue;
+
+      // Metadata BEFORE any write: the marker must survive until both halves are ready.
+      const meta = await regenerateMetadata(notePath, markdown, { replaceProperties, titleImpl, out });
+      if (!meta.ok) {
+        out.error(
+          `  ✗ ${label}: ${meta.why} — note left UNCHANGED, marker intact, still eligible.\n` +
+            `    The transcript was discarded on purpose: the audio is still saved, so a re-run redoes it.`
+        );
         failed++;
         continue;
       }
-      out.log(`  ✓ ${r.text.length} chars via ${r.provider} (attempt ${r.attempts}, lang=${r.language || "?"})`);
-      out.log(`    ${r.text.slice(0, 120)}${r.text.length > 120 ? "…" : ""}`);
 
-      const next = replaceMarker(markdown, name, r.text);
-      if (!next.replaced) continue;
-      markdown = next.markdown;
-      patched += next.replaced;
-    }
-    if (!patched) continue;
+      if (dryRun) {
+        out.log(`  · ${label}: would replace ${patched} marker(s) and rewrite the above (CREATEDAT never regenerated) [--dry-run]`);
+        continue;
+      }
 
-    if (dryRun) {
-      out.log(`  · ${label}: would replace ${patched} marker(s) [--dry-run]`);
-    } else {
-      // Commit the words FIRST: metadata regeneration must never be able to lose them.
-      await atomicWrite(notePath, markdown);
-      out.log(`  ✓ ${label}: replaced ${patched} marker(s)`);
+      // ONE write: transcript + regenerated frontmatter, or nothing at all.
+      await atomicWrite(notePath, meta.markdown);
+      out.log(`  ✓ ${label}: replaced ${patched} marker(s) and regenerated TITLE标题 + tags`);
+      recovered++;
+
+      try {
+        await renameNote(notePath, meta.fullTitle, { rename, digestDir, out });
+      } catch (e) {
+        // The note is already committed; a rename failure costs only the filename.
+        out.error(`  ! ${label}: rename skipped: ${e?.message || e}`);
+      }
+    } catch (e) {
+      out.error(`  ✗ ${label}: ${e?.message || e} — skipped, note left as it was`);
+      failed++;
     }
-    recovered++;
-    await regenerateMetadata(notePath, markdown, {
-      dryRun,
-      rename,
-      replaceProperties,
-      digestDir,
-      titleImpl,
-      out,
-    });
   }
 
   if (wanted) {
@@ -504,6 +554,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   });
   if (!result.recovered && !result.refused && !result.failed) {
     console.log("No eligible note carries a transcription-failure marker. Nothing to recover.");
+    console.log("(`--check` lists what is eligible and why each other note was refused.)");
   }
   process.exit(result.failed || result.refused ? 1 : 0);
 }

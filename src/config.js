@@ -35,6 +35,22 @@ export const VISION_MODEL = process.env.DIGEST_VISION_MODEL || "glm-5v-turbo";
 export const TITLE_MAX_TOKENS = Number(process.env.DIGEST_TITLE_MAX_TOKENS || 100000);
 export const VISION_MAX_TOKENS = Number(process.env.DIGEST_VISION_MAX_TOKENS || 2000);
 
+// --- LLM retry ladder (same mechanism as STT, see src/retry.js) -----------
+// The title/tag call is not a nicety any more: `npm run retranscribe` cannot commit
+// a recovered transcript without it, so a single-shot call to a flaky vendor would
+// reintroduce exactly the transient-blip failure this work exists to remove.
+export const LLM_MAX_ATTEMPTS = Number(process.env.DIGEST_LLM_MAX_ATTEMPTS || 4);
+// glm-5.2 runs with thinking enabled, so a legitimate title call is slow.
+export const LLM_ATTEMPT_TIMEOUT_MS = Number(process.env.DIGEST_LLM_ATTEMPT_TIMEOUT_MS || 90000);
+export const LLM_BACKOFF_BASE_MS = Number(process.env.DIGEST_LLM_BACKOFF_BASE_MS || 1000);
+export const LLM_BACKOFF_MAX_MS = Number(process.env.DIGEST_LLM_BACKOFF_MAX_MS || 8000);
+/**
+ * Hard ceiling on one generateTitleAndTags() call. Worst case with the defaults:
+ * 4 × 90s of request time (360000ms) + the 3 backoff sleeps (1+2+4 = 7000ms, at most
+ * 8750ms once jittered by +25%) = 368750ms, so 370000ms is the binding bound.
+ */
+export const LLM_TOTAL_BUDGET_MS = Number(process.env.DIGEST_LLM_TOTAL_BUDGET_MS || 370000);
+
 // --- STT vendors ---------------------------------------------------------
 // Transcription is the one step with no local fallback: if it fails the words are
 // gone, so every call goes through the retry/rotation loop in `stt.js`. Vendors,

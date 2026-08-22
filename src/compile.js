@@ -2,6 +2,7 @@
 // Pure: no I/O. Returns { filename, markdown }. Fully unit-testable.
 import { stringify as yamlStringify } from "yaml";
 import { ATTACHMENTS_VAULT_PREFIX } from "./config.js";
+import { GENERATOR_KEY, GENERATOR_STAMP } from "./provenance.js";
 import { stampChatTime, createdAt, buildFilename, glueTitle } from "./util.js";
 
 /** Obsidian embed for a vault attachment filename. */
@@ -60,8 +61,10 @@ function renderBlock(block) {
 /**
  * Build the YAML frontmatter (markdown "properties").
  * Order: CREATEDAT, TITLE标题 (ALWAYS — the filename may be byte-capped, but the property
- * always holds the full title so downstream processing has a consistent key), then the
- * LLM-generated dynamic bilingual tags.
+ * always holds the full title so downstream processing has a consistent key),
+ * GENERATOR生成器 (the provenance stamp — see src/provenance.js; grouped with the other
+ * fixed system keys rather than mixed into topic tags), then the LLM-generated dynamic
+ * bilingual tags.
  */
 export function buildProperties(fullTitle, tags, startDate) {
   return renderProperties(createdAt(startDate), fullTitle, tags);
@@ -76,6 +79,7 @@ export function renderProperties(createdAtValue, fullTitle, tags) {
   const props = {};
   if (createdAtValue != null) props.CREATEDAT = createdAtValue;
   props["TITLE标题"] = fullTitle;
+  props[GENERATOR_KEY] = GENERATOR_STAMP;
   for (const t of tags || []) {
     if (!t || !t.key) continue;
     const key = String(t.key).trim();

@@ -1,10 +1,10 @@
 // The eligibility gate on the recovery script.
 //
-// The digest folder is NOT a folder of bot-produced notes. Most of it is
-// hand-written and correctly carries no frontmatter. A recovery run must therefore
-// touch ONLY notes carrying this bot's failed-transcript marker, and must change
-// ZERO bytes of everything else — assertions here are on the FULL FILE BYTES, not
-// on a parsed view, because "we only rewrote the frontmatter" is exactly the bug.
+// A note is ours to edit ONLY if it carries the GENERATOR生成器 provenance stamp AND
+// a failed-transcript marker. The digest folder is mostly hand-written and correctly
+// carries no frontmatter; provenance is recorded at creation, never inferred from a
+// note's contents. Assertions here are on the FULL FILE BYTES, not on a parsed view,
+// because "we only rewrote the frontmatter" is exactly the bug.
 //
 // No live vendor and no live LLM: both are injected.
 import { test } from "node:test";
@@ -14,21 +14,37 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parse as yamlParse } from "yaml";
 import { runRecovery, checkNotes, classifyNote, REFUSAL } from "../scripts/retranscribe.mjs";
+import { GENERATOR_KEY, GENERATOR_STAMP } from "../src/provenance.js";
 
 const P = "Heresy-Anthology/digest/ATTACHMENTS";
 const RECOVERED = "恢复出来的合成文本。Synthetic recovered text.";
 
 const embed = (n) => `![[${P}/${n}]]`;
 
-/** A note the bot produced whose voice block failed — the only eligible shape. */
+/** Stamped by the bot AND carrying a marker — the only eligible shape. */
 const eligibleNote = (attachment) => `---
 CREATEDAT: 2026-01-02 09:10:11
 TITLE标题: 空白条目 An empty entry
+${GENERATOR_KEY}: ${GENERATOR_STAMP}
 Category分类: Test测试
 Themes主题: 占位Placeholder
 ---
 
 **01-02 09:10** opening line 开场白
+
+**01-02 09:11** ${embed(attachment)}
+> [Transcription unavailable (exhausted, 6 attempts)] - audio saved; retry: npm run retranscribe -- --all
+`;
+
+/**
+ * Bot-SHAPED and marked, but written before the stamp existed. Looks exactly like a
+ * note we made; is not provably one. Untouchable.
+ */
+const unstampedMarked = (attachment) => `---
+CREATEDAT: 2026-01-02 09:10:11
+TITLE标题: 空白条目 An empty entry
+Themes主题: 占位Placeholder
+---
 
 **01-02 09:11** ${embed(attachment)}
 > [Transcription unavailable (exhausted, 6 attempts)] - audio saved; retry: npm run retranscribe -- --all
@@ -47,10 +63,11 @@ const handWrittenMarked = (attachment) => `# 手写但带标记
 > [Transcription unavailable]
 `;
 
-/** Bot-shaped, no marker: nothing to recover, so nothing to rewrite. */
+/** Stamped, but no marker: nothing to recover, so nothing to rewrite. */
 const botNoMarker = `---
 CREATEDAT: 2026-03-04 05:06:07
 TITLE标题: 好标题 A good title
+${GENERATOR_KEY}: ${GENERATOR_STAMP}
 Themes主题: Fine没问题
 ---
 
@@ -73,6 +90,8 @@ function fixture(files) {
   for (const [name, body] of Object.entries(files)) writeFileSync(join(dir, name), body, "utf8");
   return dir;
 }
+
+const seenFirst = { done: false };
 
 const bytes = (dir) =>
   Object.fromEntries(readdirSync(dir).map((f) => [f, readFileSync(join(dir, f), "utf8")]));
@@ -97,12 +116,47 @@ const stubs = () => ({
 // The gate itself
 // ---------------------------------------------------------------------------
 
-test("classifyNote: only a marked note WITH frontmatter is eligible", () => {
+test("classifyNote: eligible needs BOTH the provenance stamp and the marker", () => {
   assert.equal(classifyNote(eligibleNote("v.ogg")).eligible, true);
-  assert.equal(classifyNote(botNoMarker).reason, REFUSAL.NO_MARKER);
-  assert.equal(classifyNote(legacySchema).reason, REFUSAL.NO_MARKER);
-  assert.equal(classifyNote(handWritten(1)).reason, REFUSAL.NO_MARKER);
+  assert.equal(classifyNote(botNoMarker).reason, REFUSAL.NO_MARKER, "stamped, but nothing to do");
+  assert.equal(classifyNote(unstampedMarked("v.ogg")).reason, REFUSAL.NO_STAMP, "marked, but not ours");
+  assert.equal(classifyNote(legacySchema).reason, REFUSAL.NO_STAMP, "a legacy schema is NOT an implicit stamp");
+  assert.equal(classifyNote(handWritten(1)).reason, REFUSAL.NO_FRONTMATTER);
   assert.equal(classifyNote(handWrittenMarked("v.ogg")).reason, REFUSAL.NO_FRONTMATTER);
+});
+
+test("the stamp is matched on the generator segment, never as a substring", () => {
+  const impostor = (v) => eligibleNote("v.ogg").replace(`${GENERATOR_KEY}: ${GENERATOR_STAMP}`, `${GENERATOR_KEY}: ${v}`);
+  assert.equal(classifyNote(impostor("digest/1")).eligible, true);
+  assert.equal(classifyNote(impostor("digest/2")).eligible, true, "a version bump stays ours");
+  assert.equal(classifyNote(impostor("not-digest/1")).reason, REFUSAL.NO_STAMP);
+  assert.equal(classifyNote(impostor("mydigest/1")).reason, REFUSAL.NO_STAMP);
+  assert.equal(classifyNote(impostor("a digest of the day")).reason, REFUSAL.NO_STAMP);
+});
+
+test("REGRESSION GUARD — an UNSTAMPED note is never edited, even carrying the marker", async () => {
+  // The captain's instruction, encoded. If the provenance check is ever removed this
+  // test must fail loudly: the blast radius is his personal journal, and a note the
+  // bot did not create is not ours to rewrite no matter how bot-shaped it looks.
+  const dir = fixture({ "20260102-0910 unstamped.md": unstampedMarked("a-voice.ogg") });
+  const before = bytes(dir);
+
+  await runRecovery({ all: true, digestDir: dir, attachmentsDir: dir, ...stubs() });
+  assert.deepEqual(bytes(dir), before, "--all must not touch an unstamped note");
+
+  await runRecovery({ targets: ["a-voice.ogg"], digestDir: dir, attachmentsDir: dir, ...stubs() });
+  assert.deepEqual(bytes(dir), before, "naming it explicitly must not bypass the stamp check");
+
+  // And no opt-in flag may unlock it either — there is deliberately no override.
+  await runRecovery({
+    all: true,
+    replaceProperties: true,
+    rename: true,
+    digestDir: dir,
+    attachmentsDir: dir,
+    ...stubs(),
+  });
+  assert.deepEqual(bytes(dir), before, "no flag makes an unstamped note eligible");
 });
 
 test("the bare legacy marker counts as eligible too — older notes carry it", () => {
@@ -115,6 +169,15 @@ test("the bare legacy marker counts as eligible too — older notes carry it", (
 // ---------------------------------------------------------------------------
 // a-d: each refused shape comes back byte-identical
 // ---------------------------------------------------------------------------
+
+test("a stamped note keeps its stamp through a recovery, and through a full rebuild", async () => {
+  for (const replaceProperties of [false, true]) {
+    const dir = fixture({ "20260102-0910 empty.md": eligibleNote("a-voice.ogg") });
+    await runRecovery({ all: true, replaceProperties, digestDir: dir, attachmentsDir: dir, ...stubs() });
+    const fm = yamlParse(readFileSync(join(dir, "20260102-0910 empty.md"), "utf8").split("\n---\n")[0].replace(/^---\n/, ""));
+    assert.equal(fm[GENERATOR_KEY], GENERATOR_STAMP, `stamp must survive (replaceProperties=${replaceProperties})`);
+  }
+});
 
 test("a: a note with NO frontmatter is byte-identical, marker or not", async () => {
   const dir = fixture({
@@ -173,9 +236,12 @@ test("d: an eligible note gets a new title and tags, keeps its other keys and CR
 // ---------------------------------------------------------------------------
 
 test("e: a whole-folder run modifies ONLY the eligible notes", async () => {
+  // Built at the REAL ratio: overwhelmingly unstamped hand-written notes, a stamped
+  // minority, and the near-misses that must still be refused.
   const files = { "20260102-0910 eligible.md": eligibleNote("a-voice.ogg") };
-  for (let i = 0; i < 12; i++) files[`2026010${i % 9}-100${i} hand-${i}.md`] = handWritten(i);
+  for (let i = 0; i < 20; i++) files[`2026010${i % 9}-10${String(i).padStart(2, "0")} hand-${i}.md`] = handWritten(i);
   files["20260201-0101 hand-marked.md"] = handWrittenMarked("b-voice.ogg");
+  files["20260202-0202 unstamped-marked.md"] = unstampedMarked("c-voice.ogg");
   files["20260304-0506 ok.md"] = botNoMarker;
   files["20250506-0708 legacy.md"] = legacySchema;
 
@@ -221,10 +287,14 @@ test("--check is free: it classifies the folder, calls nothing and writes nothin
   assert.deepEqual(bytes(dir), before);
 });
 
-test("the title model being unavailable keeps the transcript and leaves metadata stale", async () => {
+test("a metadata failure leaves the note BYTE-IDENTICAL, marker intact, still eligible", async () => {
+  // The trap this replaces: committing the transcript first consumed the marker, so a
+  // single transient title-model blip stranded the note as permanently ineligible.
+  // The transcript is deferred work, not lost data — the audio is still in the vault.
   const dir = fixture({ "20260102-0910 empty.md": eligibleNote("a-voice.ogg") });
+  const before = bytes(dir);
   const errors = [];
-  await runRecovery({
+  const result = await runRecovery({
     all: true,
     digestDir: dir,
     attachmentsDir: dir,
@@ -233,10 +303,79 @@ test("the title model being unavailable keeps the transcript and leaves metadata
     out: { log() {}, error: (m) => errors.push(String(m)) },
   });
 
+  assert.deepEqual(bytes(dir), before, "nothing is written when the metadata half fails");
+  assert.equal(result.recovered, 0);
+  assert.equal(result.failed, 1);
+  assert.ok(errors.some((e) => e.includes("still eligible")));
+
+  // Still eligible, so the next run can finish the job.
   const md = readFileSync(join(dir, "20260102-0910 empty.md"), "utf8");
-  assert.match(md, new RegExp(`> ${RECOVERED}`), "the transcript is never rolled back");
-  assert.match(md, /TITLE标题: 空白条目 An empty entry/, "the old title is kept, not replaced by a worse one");
-  assert.ok(errors.some((e) => e.includes("STALE")));
+  assert.equal(classifyNote(md).eligible, true);
+  await runRecovery({ all: true, digestDir: dir, attachmentsDir: dir, ...stubs() });
+  assert.match(readFileSync(join(dir, "20260102-0910 empty.md"), "utf8"), new RegExp(`> ${RECOVERED}`));
+});
+
+test("one note throwing does not abort the run — the rest still recover", async () => {
+  const dir = fixture({
+    "20260101-0101 broken.md": eligibleNote("a-voice.ogg"),
+    "20260202-0202 fine.md": eligibleNote("b-voice.ogg"),
+  });
+  const errors = [];
+  const result = await runRecovery({
+    all: true,
+    digestDir: dir,
+    attachmentsDir: dir,
+    ...stubs(),
+    titleImpl: async (input) => {
+      if (input.includes("恢复出来的合成文本")) {
+        // Both notes reach the title model; blow up only on the first one processed.
+        if (!errors.length && !seenFirst.done) {
+          seenFirst.done = true;
+          throw new Error("EACCES: vault file is locked");
+        }
+      }
+      return {
+        title: { zh: "恢复后的标题", en: "Recovered title" },
+        tags: [{ key: "Category分类", value: "Recovered恢复" }],
+        fallback: false,
+      };
+    },
+    out: { log() {}, error: (m) => errors.push(String(m)) },
+  });
+
+  assert.equal(result.failed, 1, "the throwing note is counted, not fatal");
+  assert.equal(result.recovered, 1, "the other note still recovered");
+  assert.ok(errors.some((e) => e.includes("EACCES")));
+  assert.match(readFileSync(join(dir, "20260202-0202 fine.md"), "utf8"), new RegExp(`> ${RECOVERED}`));
+});
+
+test("a missing digest folder is reported, not thrown", async () => {
+  const errors = [];
+  const result = await runRecovery({
+    all: true,
+    digestDir: join(tmpdir(), "digest-gate-does-not-exist-12345"),
+    attachmentsDir: tmpdir(),
+    ...stubs(),
+    out: { log() {}, error: (m) => errors.push(String(m)) },
+  });
+  assert.deepEqual(result, { recovered: 0, refused: 0, failed: 0 });
+  assert.ok(errors.some((e) => e.includes("cannot read")));
+});
+
+test("naming an attachment that is eligible but unmarked says so instead of going quiet", async () => {
+  const dir = fixture({ "20260304-0506 ok.md": botNoMarker });
+  const logs = [];
+  await runRecovery({
+    targets: ["ok-voice.ogg"],
+    digestDir: dir,
+    attachmentsDir: dir,
+    ...stubs(),
+    out: { log: (m) => logs.push(String(m)), error: (m) => logs.push(String(m)) },
+  });
+  assert.ok(
+    logs.some((m) => m.includes("no failure marker") || m.includes("nothing here needs recovering")),
+    `the named-target path must always explain itself, got ${JSON.stringify(logs)}`
+  );
 });
 
 test("a Chinese-only title with no tags is a REAL answer, not a fallback", async () => {

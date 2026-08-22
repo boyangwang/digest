@@ -14,6 +14,7 @@ process.env.ELEVENLABS_API_KEY = ""; // STT returns null
 
 const store = await import("../src/store.js");
 const { finalizeDigest, buildLLMInput } = await import("../src/finalize.js");
+const { GENERATOR_KEY, GENERATOR_STAMP } = await import("../src/provenance.js");
 
 test("buildLLMInput orders + labels substance", () => {
   const txt = buildLLMInput([
@@ -63,4 +64,22 @@ test("full offline finalize writes a note + moves attachments + clears pending",
 
   // pending cleared
   assert.equal(await store.hasPending(CHAT), false);
+});
+
+test("a note the bot creates carries the provenance stamp — asserted on the written FILE", async () => {
+  // If this stops being written, every future note becomes untouchable by the
+  // recovery tool, silently. Assert on disk so it cannot regress unnoticed.
+  const CHAT = 77001;
+  await store.startPending(CHAT, "2025-09-05T03:53:52Z");
+  await store.appendBlock(CHAT, { type: "text", text: "something worth a note 值得记一笔" });
+
+  const result = await finalizeDigest(CHAT);
+  const md = readFileSync(join(process.env.DIGEST_OUT_DIR, result.filename), "utf8");
+  const frontmatter = md.split("\n---\n")[0].replace(/^---\n/, "");
+
+  assert.match(md, /^---\n/, "the note has frontmatter");
+  assert.equal(
+    frontmatter.split("\n").find((l) => l.startsWith(GENERATOR_KEY)),
+    `${GENERATOR_KEY}: ${GENERATOR_STAMP}`
+  );
 });

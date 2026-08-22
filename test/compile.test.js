@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { parse as yamlParse } from "yaml";
 import { compileNote, buildProperties, transcriptFailureMarker } from "../src/compile.js";
+import { GENERATOR_KEY, GENERATOR_STAMP } from "../src/provenance.js";
 
 const startDate = new Date("2025-09-05T03:53:52Z"); // 11:53:52 SGT
 
@@ -17,7 +18,9 @@ test("buildProperties: CREATEDAT + TITLE标题 always first, then dynamic biling
   assert.equal(p.CREATEDAT, "2025-09-05 11:53:52");
   assert.equal(p["TITLE标题"], "超我 Ubermensch");
   assert.equal(p["Category分类"], "Life生活");
-  assert.deepEqual(Object.keys(p).slice(0, 2), ["CREATEDAT", "TITLE标题"]);
+  assert.deepEqual(Object.keys(p).slice(0, 3), ["CREATEDAT", "TITLE标题", GENERATOR_KEY]);
+  // Provenance is stamped at creation, never inferred later — see src/provenance.js.
+  assert.equal(p[GENERATOR_KEY], GENERATOR_STAMP);
 
   // TITLE标题 is present even for short titles (consistent key for downstream processing)
   const short = yamlParse(buildProperties("短标题 Short", [], startDate));

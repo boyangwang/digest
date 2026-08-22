@@ -47,9 +47,21 @@
    carries the failed-transcript marker AND already has frontmatter; everything else is refused
    with a reason and zero bytes changed. Never create frontmatter, never migrate a legacy note,
    never let an explicitly named attachment bypass the gate.
-11. Frontmatter rewriting **MERGES** into the existing block (`parseDocument`, so untouched keys
-   keep their formatting): only `TITLE标题` and the generated tag keys are written. Hand-added
-   keys survive. `--replace-properties` is the only way a key is removed.
+11. Frontmatter rewriting **MERGES** into the existing block (`parseDocument`): only `TITLE标题`
+   and the generated tag keys are written. Hand-added keys keep their VALUES and comments —
+   but yaml v2 re-serializes the block, so layout may be normalized (`aliases:\n- x` comes back
+   indented). `--replace-properties` is the only way a key is removed.
+12. **Provenance is stamped, never inferred** (`src/provenance.js`). Every note the bot creates
+   carries `GENERATOR生成器: digest/1` as the third fixed property. `retranscribe` — and any
+   future tool that edits a note in place — may act only if the note carries BOTH that stamp
+   AND the failed-transcript marker. No flag or env var overrides the stamp check. Notes
+   predating it are untouchable on purpose; do NOT retro-stamp them.
+13. **Recovery is one atomic write**: transcript + regenerated frontmatter together. If the
+   title model gives up, the transcript is DISCARDED, not committed — committing it consumes
+   the marker and strands the note with metadata nothing can fix. (This supersedes the earlier
+   "never roll back the transcript" rule.)
+14. `generateTitleAndTags` runs on the SAME ladder as STT (`src/retry.js`, `LLM_*` knobs in
+   `config.js`). It sits on the recovery critical path, so a single blip must not cost a run.
 
 ## What this is
 Telegram bot: send text/voice/photos/files in any order → tap ✅ Done / `/done` → one bilingual
@@ -68,6 +80,7 @@ secret-run node src/index.js      # run locally (vault keys injected)
 bash launchd/deploy.sh            # deploy launchd network.deardiary.digest
 tail -f ~/.local/share/digest/digest.log   # NEVER /tmp — macOS purges it under the running service
 secret-run npm run retranscribe -- --check           # FREE census: eligible vs refused notes
+#   eligible = carries GENERATOR生成器 stamp AND a failed-transcript marker
 secret-run npm run retranscribe -- --all             # recover any failed transcript
 #   --dry-run is NOT free: 1 STT + 1 title/tag LLM call per eligible note
 ```

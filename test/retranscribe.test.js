@@ -192,3 +192,35 @@ test("a note with no frontmatter is never given one", () => {
   const bare = "**01-02 09:11** ![[Heresy-Anthology/digest/ATTACHMENTS/a-voice.ogg]]\n> hand-written\n";
   assert.equal(rewriteFrontmatter(bare, "T", []), null);
 });
+
+test("hand-added VALUES survive re-serialization, even from awkward layout", () => {
+  // Honest claim check: the yaml document model preserves values and comments, but it
+  // re-serializes the block, so layout (flat sequences, extra spacing, flow style) is
+  // normalized. Content is what must not change.
+  const note = `---
+CREATEDAT: 2026-01-02 09:10:11
+TITLE标题: 旧标题 Old title
+aliases:
+- flat one
+- flat two
+note:     over-spaced value
+cssclasses: [wide, dense]
+readwise: 12345
+---
+
+**01-02 09:11** ![[Heresy-Anthology/digest/ATTACHMENTS/a-voice.ogg]]
+> [Transcription unavailable]
+`;
+  const { markdown, leftAlone } = rewriteFrontmatter(note, "新的 New", [{ key: "Category分类", value: "X" }]);
+  const fm = yamlParse(splitNote(markdown).frontmatterRaw);
+
+  assert.deepEqual(fm.aliases, ["flat one", "flat two"], "a flat sequence keeps its VALUES");
+  assert.equal(fm.note, "over-spaced value");
+  assert.deepEqual(fm.cssclasses, ["wide", "dense"]);
+  assert.equal(fm.readwise, 12345);
+  assert.equal(fm.CREATEDAT, "2026-01-02 09:10:11");
+  for (const k of ["aliases", "note", "cssclasses", "readwise"]) assert.ok(leftAlone.includes(k));
+
+  // The body below the frontmatter is still byte-identical.
+  assert.equal(splitNote(markdown).body, splitNote(note).body);
+});
