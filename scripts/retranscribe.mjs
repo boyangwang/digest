@@ -14,6 +14,16 @@
 //   npm run retranscribe -- --all --dry-run         # preview; NOT free, see below
 //   npm run retranscribe -- --all --rename          # …and rename the file on disk too
 //
+// EXIT CODES are a contract, not an accident:
+//   0  everything this tool was ALLOWED to do succeeded. Notes the gate refused are
+//      still named loudly in the output, but they are not failures — a note that
+//      needs recovery and is not ours to touch can never become eligible, so exiting
+//      non-zero for it would be permanent, and a permanently-failing exit code is how
+//      automation learns to ignore a tool.
+//   1  something actually went wrong: a transcription exhausted its retries, a write
+//      failed, a named attachment matched no note, the vault could not be read.
+//   2  bad usage (no attachment, no --all, no --check).
+//
 // ELIGIBILITY IS A HARD PRECONDITION, checked before a note is read for rewriting
 // and before any STT or LLM call is made for it. A note qualifies ONLY if BOTH:
 //   (a) it carries this program's PROVENANCE STAMP (src/provenance.js) — "is this
@@ -428,7 +438,9 @@ export async function runRecovery({
   const transcripts = new Map(); // attachment name → result, so one file is fetched once
   let recovered = 0;
   let previewed = 0;
-  let refusedNamed = 0;
+  // `blocked` is "needs a human", NOT a failure: the gate refused a note that carries
+  // a marker. `failed` is "something went wrong" and is the only thing that exits 1.
+  let blocked = 0;
   let failed = 0;
 
   for (const { path: notePath, markdown: original } of notes) {
@@ -453,7 +465,7 @@ export async function runRecovery({
                 : "") +
               `  Nothing was read, sent to a vendor, or written for this note.`
           );
-          refusedNamed++;
+          blocked++;
         }
         continue;
       }
@@ -528,12 +540,14 @@ export async function runRecovery({
     for (const name of wanted) {
       const seen = notes.some((n) => n.markdown.includes(`![[${ATTACHMENTS_VAULT_PREFIX}/${name}]]`));
       if (!seen) {
+        // You asked for something that is not there: a real failure of the requested
+        // operation, unlike the gate declining a note during a sweep.
         out.error(`\n✗ ${name}: no note in ${digestDir} embeds this attachment — nothing to recover, no vendor called.`);
-        refusedNamed++;
+        failed++;
       }
     }
   }
-  return { recovered, previewed, refused: refusedNamed, failed };
+  return { recovered, previewed, blocked, failed };
 }
 
 // Run only as a CLI — tests import the exported helpers directly.
@@ -571,15 +585,16 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   });
 
   const touched = result.recovered + result.previewed;
-  if (!touched && !result.refused && !result.failed) {
+  if (!touched && !result.blocked && !result.failed) {
     console.log("\nNo eligible note carries a transcription-failure marker. Nothing to recover.");
     console.log("(`--check` lists what is eligible and why each other note was refused.)");
   } else {
     const verb = dryRun ? "would recover" : "recovered";
     console.log(
-      `\n${verb} ${touched} note(s); ${result.failed} failed, ${result.refused} refused.` +
+      `\n${verb} ${touched} note(s); ${result.failed} failed, ${result.blocked} blocked (need a human).` +
         (dryRun ? " Nothing was written [--dry-run]." : "")
     );
   }
-  process.exit(result.failed || result.refused ? 1 : 0);
+  // Blocked notes are reported, never fatal: see the exit-code contract up top.
+  process.exit(result.failed ? 1 : 0);
 }

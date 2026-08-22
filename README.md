@@ -35,7 +35,7 @@ LLM-generated title and tags. "Dear diary", multimodal.
 | `transcriptions.js` | in-flight transcriptions per chat; what `/done` waits on |
 | `retry.js` | the shared attempt ladder (attempts, rotation, backoff, budget) |
 | `provenance.js` | the `GENERATOR生成器` stamp: who created a note, and may we edit it |
-| `log.js` | stdout + a private (0600), size-capped, rotating log file |
+| `log.js` | a private (0600), size-capped, rotating log file; console only on a TTY |
 | `store.js` | pending digest on disk (ordered, atomic, crash-safe) |
 | `finalize.js` | `/done`: assemble → title/tags → move attachments → compile → write |
 | `compile.js` | ordered blocks + metadata → final markdown + filename (pure) |
@@ -54,13 +54,20 @@ npm install
 npm test                                   # unit + offline E2E
 secret-run node src/index.js               # run locally (injects vault keys)
 bash launchd/deploy.sh                      # install + start launchd service
-tail -f ~/.local/share/digest/digest.log    # logs (durable — never /tmp, which macOS purges)
+tail -f ~/.local/share/digest/digest.log           # app log (rotated, 0600) — the one to read
+tail -f ~/.local/share/digest/digest-service.log  # launchd's net for anything that escaped the logger
 ```
 
 - **Output:** `~/Documents/NotesVault/Heresy-Anthology/digest/` (Obsidian-synced);
   attachments in `ATTACHMENTS/`.
 - **Secrets (sops vault):** `DIGEST_BOT_TOKEN`, `ELEVENLABS_API_KEY`, `OPENAI_API_KEY`, `TENCENT_TOKENHUB_API_KEY`.
-- **Service:** launchd `network.deardiary.digest`.
+- **Service:** launchd `network.deardiary.digest`. It writes **two** files, one writer each:
+  `digest.log` is the app's own (rotated, mode 0600, holds the detail); `digest-service.log` is
+  launchd's capture of stdout/stderr, which exists to catch whatever never reaches the logger —
+  an early FATAL, an uncaught stack. **If `digest-service.log` is non-empty, something escaped
+  the logger and is worth reading.** The two paths must never be the same file: sharing one inode
+  would let log rotation move it out from under launchd's open handle, and the crash output is
+  precisely what would then be lost.
 
 ## Recovering a failed transcript
 

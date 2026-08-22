@@ -89,3 +89,59 @@ test("an unwritable log degrades to console only, silently", () => {
     chmodSync(path, 0o600);
   }
 });
+
+// ---------------------------------------------------------------------------
+// Console mirroring: under launchd the console IS the service's log file
+// ---------------------------------------------------------------------------
+
+test("without a TTY the line goes to the FILE only — launchd's file gets no duplicate", () => {
+  // Mirroring under launchd would hand digest-service.log an unbounded, launchd-owned
+  // duplicate of everything we deliberately keep 0600 and size-capped here.
+  const path = fixture();
+  const seen = [];
+  const log = createLogger({
+    path,
+    useConsole: false,
+    sink: { log: (m) => seen.push(m), error: (m) => seen.push(m) },
+  });
+  log.info("only in the file 只进文件");
+
+  assert.deepEqual(seen, [], "nothing mirrored to the console");
+  assert.match(readFileSync(path, "utf8"), /only in the file/);
+});
+
+test("with a TTY (or DIGEST_LOG_CONSOLE) the line goes to BOTH, so live runs still show output", () => {
+  const path = fixture();
+  const seen = [];
+  const log = createLogger({
+    path,
+    useConsole: true,
+    sink: { log: (m) => seen.push(m), error: (m) => seen.push(m) },
+  });
+  log.info("visible live 实时可见");
+
+  assert.equal(seen.length, 1);
+  assert.match(readFileSync(path, "utf8"), /visible live/);
+});
+
+test("SAFETY — if the file is unwritable the line falls back to the console even without a TTY", () => {
+  // Losing the file must never mean losing the line: that is the failure this whole
+  // change exists to prevent.
+  const dir = mkdtempSync(join(tmpdir(), "digest-log-nofile-"));
+  const path = join(dir, "digest.log");
+  writeFileSync(path, "");
+  chmodSync(path, 0o400);
+  try {
+    const seen = [];
+    const log = createLogger({
+      path,
+      useConsole: false,
+      sink: { log: (m) => seen.push(m), error: (m) => seen.push(m) },
+    });
+    log.error("must not vanish 不能消失");
+    assert.equal(seen.length, 1, "the line survived on the console");
+    assert.match(seen[0], /must not vanish/);
+  } finally {
+    chmodSync(path, 0o600);
+  }
+});

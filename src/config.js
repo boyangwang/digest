@@ -113,6 +113,30 @@ export const FILENAME_TITLE_MAX_BYTES = 200;
 export const LOG_PATH = process.env.DIGEST_LOG_PATH || join(DATA_DIR, "digest.log");
 
 /**
+ * launchd's OWN capture of stdout/stderr, and it must NEVER equal LOG_PATH.
+ *
+ * They used to be the same file, so the service's fd 1/2 and this app both appended
+ * to one inode. Any rename-based rotation then moved that inode out from under
+ * launchd — which never reopens by path — so from the first rotation onward every
+ * line the service wrote, including the crash output that bypasses the logger
+ * entirely, went to an orphan nobody tails and that grew outside the size cap. That
+ * is the /tmp NLINK=0 failure in a new costume. One writer per file, always.
+ *
+ * This file is the NET for whatever escapes the logger (an early FATAL, an uncaught
+ * stack). If it is non-empty, something escaped and is worth reading.
+ */
+export const SERVICE_LOG_PATH = join(DATA_DIR, "digest-service.log");
+
+/**
+ * Mirror log lines to the console as well as the file. Off under launchd (no TTY),
+ * because there the console IS the service log — mirroring would hand it an
+ * unbounded, launchd-owned duplicate of a file we deliberately keep 0600 and capped.
+ */
+export const LOG_CONSOLE = ["1", "true", "yes"].includes(
+  String(process.env.DIGEST_LOG_CONSOLE || "").toLowerCase()
+);
+
+/**
  * The log deliberately records raw model output when a response will not parse — the
  * actual bytes are the only thing that explains why — so it holds journal-derived
  * content and must be both private (mode 0600, see `src/log.js`) and BOUNDED.

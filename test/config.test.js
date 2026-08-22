@@ -29,19 +29,53 @@ test("the default log path is durable — never under /tmp", () => {
   assert.equal(logPath, `${defaultConfigValue("DATA_DIR")}/digest.log`);
 });
 
-test("the launchd plist logs to the same durable path as the code", async () => {
+/** StandardOutPath / StandardErrorPath as the plist actually declares them. */
+async function plistStdioPaths() {
   const { readFileSync } = await import("node:fs");
   const plist = readFileSync(new URL("../launchd/network.deardiary.digest.plist", import.meta.url), "utf8");
+  const read = (key) =>
+    plist.match(new RegExp(`<key>${key}</key>\\s*<string>([^<]*)</string>`))?.[1];
+  return { plist, out: read("StandardOutPath"), err: read("StandardErrorPath") };
+}
+
+test("THE SERVICE AND THE APP MUST NEVER SHARE A LOG FILE", async () => {
+  // Not a spelling check. If launchd's stdout/stderr point at LOG_PATH, its fd 1/2
+  // and src/log.js append to the SAME inode — and the rename-based rotation in
+  // log.js then moves that inode out from under launchd, which never reopens by
+  // path. Everything the service writes after the first rotation, including the
+  // crash output that never reaches the logger at all, lands in an orphan nobody
+  // tails and that grows outside the size cap. That is the /tmp NLINK=0 failure
+  // this whole branch exists to eliminate, wearing a different hat.
+  const { out, err } = await plistStdioPaths();
+  const appLog = defaultConfigValue("LOG_PATH");
+  const serviceLog = defaultConfigValue("SERVICE_LOG_PATH");
+
+  assert.ok(out, "plist must declare StandardOutPath");
+  assert.ok(err, "plist must declare StandardErrorPath");
+  for (const [label, p] of [["StandardOutPath", out], ["StandardErrorPath", err]]) {
+    assert.notEqual(p, appLog, `${label} must NOT be the app's own LOG_PATH`);
+    assert.ok(!p.endsWith("/digest.log"), `${label} must not be any file named digest.log, got ${p}`);
+    assert.ok(!p.startsWith("/tmp/") && !p.startsWith("/private/tmp/"), `${label} must be durable, got ${p}`);
+    assert.ok(p.endsWith(serviceLog.slice(serviceLog.lastIndexOf("/"))), `${label} should be the service log, got ${p}`);
+  }
+});
+
+test("the launchd plist and the code agree on the durable log directory", async () => {
+  const { plist } = await plistStdioPaths();
   assert.ok(!plist.includes("/tmp/digest.log"), "plist must not point launchd at /tmp");
   // Compare the HOME-relative suffix, not a $HOME-spliced absolute path: the plist
   // hardcodes one machine's home, so splicing in $HOME makes this fail anywhere else
   // for a reason that has nothing to do with the invariant being guarded.
-  const SUFFIX = ".local/share/digest/digest.log";
+  const DIR_SUFFIX = ".local/share/digest/";
   assert.ok(
-    defaultConfigValue("LOG_PATH").endsWith(SUFFIX),
-    `LOG_PATH should end with ${SUFFIX}, got ${defaultConfigValue("LOG_PATH")}`
+    defaultConfigValue("LOG_PATH").endsWith(`${DIR_SUFFIX}digest.log`),
+    `LOG_PATH should end with ${DIR_SUFFIX}digest.log, got ${defaultConfigValue("LOG_PATH")}`
   );
-  assert.ok(plist.includes(SUFFIX), `plist should log to …/${SUFFIX}`);
+  assert.ok(
+    defaultConfigValue("SERVICE_LOG_PATH").endsWith(`${DIR_SUFFIX}digest-service.log`),
+    "SERVICE_LOG_PATH should sit beside it"
+  );
+  assert.ok(plist.includes(DIR_SUFFIX), `plist should log under …/${DIR_SUFFIX}`);
 });
 
 test("the vendor rotation is configured with two vendors by default", () => {

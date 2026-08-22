@@ -1,4 +1,12 @@
-// Minimal logger → stdout + a log file (append). Never throws.
+// Minimal logger → a log file (append), plus the console when someone is watching.
+// Never throws.
+//
+// THIS APP IS THE ONLY WRITER OF LOG_PATH. launchd captures stdout/stderr to its own
+// SERVICE_LOG_PATH (see config.js and the plist) precisely so that is true: sharing
+// one inode would mean the rename-based rotation below moves the file out from under
+// launchd's fd, and what would then go missing is the crash output that never reaches
+// this logger at all. Sole ownership is also what makes the tracked `size` exact,
+// since nothing else appends behind our back.
 //
 // The file is treated as PRIVATE and BOUNDED, because it deliberately records raw
 // model output on an unparseable response (see `src/llm.js`) and that content is
@@ -14,7 +22,7 @@
 // just renamed aside.
 import { appendFileSync, mkdirSync, renameSync, statSync, rmSync } from "node:fs";
 import { dirname } from "node:path";
-import { LOG_PATH, LOG_MAX_BYTES, LOG_RETAIN } from "./config.js";
+import { LOG_PATH, LOG_MAX_BYTES, LOG_RETAIN, LOG_CONSOLE } from "./config.js";
 
 const FILE_MODE = 0o600;
 const DIR_MODE = 0o700;
@@ -28,6 +36,11 @@ export function createLogger({
   maxBytes = LOG_MAX_BYTES,
   retain = LOG_RETAIN,
   sink = console,
+  // Mirror to the console only when a human is watching. Under launchd there is no
+  // TTY and the console IS launchd's log file, so mirroring would hand that
+  // app-unrotatable, launchd-owned file a full duplicate of everything we keep 0600
+  // and capped here. DIGEST_LOG_CONSOLE=1 forces it back on for piped-but-live runs.
+  useConsole = LOG_CONSOLE || Boolean(process.stdout?.isTTY),
 } = {}) {
   let size = null; // null = the file is unusable, keep logging to the console only
 
@@ -69,15 +82,17 @@ export function createLogger({
     }
   }
 
+  /** @returns {boolean} true when the line reached the file. */
   function write(line) {
-    if (size === null) return;
+    if (size === null) return false;
     const bytes = Buffer.byteLength(line, "utf8");
     try {
       if (maxBytes > 0 && size > 0 && size + bytes > maxBytes) rotate();
       appendFileSync(path, line, { encoding: "utf8", mode: FILE_MODE });
       size += bytes;
+      return true;
     } catch {
-      /* logging must never crash the bot */
+      return false; // logging must never crash the bot
     }
   }
 
@@ -85,8 +100,11 @@ export function createLogger({
     const line = `${new Date().toISOString()} [digest] ${level}: ${args
       .map((a) => (typeof a === "string" ? a : JSON.stringify(a)))
       .join(" ")}`;
-    (level === "ERROR" ? sink.error : sink.log)(line);
-    write(line + "\n");
+    // File first, console second: if the file is unavailable for ANY reason the line
+    // still goes to the console regardless of TTY. Losing the file must never mean
+    // losing the line — that is the failure this whole change exists to prevent.
+    const persisted = write(line + "\n");
+    if (useConsole || !persisted) (level === "ERROR" ? sink.error : sink.log)(line);
   }
 
   open();

@@ -364,7 +364,7 @@ test("a missing digest folder is reported, not thrown", async () => {
     ...stubs(),
     out: { log() {}, error: (m) => errors.push(String(m)) },
   });
-  assert.deepEqual(result, { recovered: 0, previewed: 0, refused: 0, failed: 0 });
+  assert.deepEqual(result, { recovered: 0, previewed: 0, blocked: 0, failed: 0 });
   assert.ok(errors.some((e) => e.includes("cannot read")));
 });
 
@@ -447,7 +447,8 @@ test("--all names a marked-but-unstamped note instead of skipping it in silence"
   });
   const text = errors.join("\n");
 
-  assert.equal(result.refused, 1, "exactly the marked-but-unstamped note is announced");
+  assert.equal(result.blocked, 1, "exactly the marked-but-unstamped note is announced");
+  assert.equal(result.failed, 0, "a blocked note is NOT a failure — see the exit-code contract");
   assert.match(text, /20260102-0910 blocked\.md/);
   assert.match(text, /DOES carry a failure marker/);
   assert.ok(!text.includes("20260304-0506 ok.md"), "a stamped note with nothing to do stays quiet");
@@ -476,4 +477,31 @@ test("GUARD — rewriteFrontmatter can never MANUFACTURE a provenance stamp", as
     assert.ok(!markdown.includes(GENERATOR_KEY), `no stamp may appear (replaceAll=${replaceAll})`);
     assert.equal(classifyNote(markdown).reason, REFUSAL.NO_STAMP, "and the note stays ineligible");
   }
+});
+
+test("a blocked note is reported but is NOT counted as a failure", async () => {
+  // A note that needs recovery and is not ours to touch can never become eligible,
+  // so treating it as a failure would make the exit code permanently non-zero — and
+  // a permanently-failing exit code is how automation learns to ignore a tool.
+  const dir = fixture({
+    "20260102-0910 blocked.md": unstampedMarked("a-voice.ogg"),
+    "20260202-0202 fine.md": eligibleNote("b-voice.ogg"),
+  });
+  const result = await runRecovery({ digestDir: dir, attachmentsDir: dir, ...stubs() });
+
+  assert.equal(result.recovered, 1, "the eligible note still recovered");
+  assert.equal(result.blocked, 1, "the blocked note is still counted and named");
+  assert.equal(result.failed, 0, "but it is not a failure");
+});
+
+test("naming an attachment no note embeds IS a failure — you asked for something absent", async () => {
+  const dir = fixture({ "20260102-0910 empty.md": eligibleNote("a-voice.ogg") });
+  const result = await runRecovery({
+    targets: ["not-in-any-note.ogg"],
+    digestDir: dir,
+    attachmentsDir: dir,
+    ...stubs(),
+  });
+  assert.equal(result.failed, 1);
+  assert.equal(result.blocked, 0);
 });

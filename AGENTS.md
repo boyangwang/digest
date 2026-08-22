@@ -6,9 +6,10 @@
 - **Status:** ✅ Shipped. 52/52 tests green; all 3 live APIs verified; Boyang UAT passed ("pretty good"); deployed to launchd `network.deardiary.digest`; pushed to `origin/main`.
 - **Done recently:** JS rewrite; reusable title prompt from 552 vault titles; UAT fixes (serial# on every msg, ACK+Done button, IM inline timestamps, always-`TITLE标题`); deploy.
 - **Known blockers:** Obsidian **must stay running on the mini** for Sync to propagate notes to phone (it's a server; Sync only runs while the app is open) — offered to add a keep-alive, pending Boyang's call. Vision caption ~15s/image (acceptable).
-- **Next step:** captain must `bash launchd/deploy.sh` (or reload `network.deardiary.digest`)
-  for the new durable `StandardOutPath` to take effect — a plist edit alone does nothing to a
-  running service.
+- **Next step:** captain must `bash launchd/deploy.sh` (or reload `network.deardiary.digest`).
+  The plist now carries TWO changes needing that reload: the durable log path AND the split of
+  launchd's stdout/stderr onto `digest-service.log`. A plist edit alone does nothing to a
+  running service; until it is reloaded, launchd still writes to `digest.log`.
 
 ### Log (newest first)
 - 2026-08-21 — v1.2.1 review round: transcription moved off the per-chat queue (+ per-chat
@@ -78,13 +79,20 @@ Tests: `node --test` via `npm test`, which loads `test/setup.mjs` with `--import
 npm test                          # unit + offline E2E
 secret-run node src/index.js      # run locally (vault keys injected)
 bash launchd/deploy.sh            # deploy launchd network.deardiary.digest
-tail -f ~/.local/share/digest/digest.log   # NEVER /tmp — macOS purges it under the running service
+tail -f ~/.local/share/digest/digest.log           # the APP's log: rotated, 0600, the one to read
+tail -f ~/.local/share/digest/digest-service.log  # launchd's net; NON-EMPTY = something escaped the logger
+#   NEVER /tmp — macOS purges it under the running service.
+#   These two paths must NEVER be the same file (see conventions below).
 secret-run npm run retranscribe -- --check           # FREE census: eligible vs refused notes
 #   eligible = carries GENERATOR生成器 stamp AND a failed-transcript marker
 #   --check NAMES any refused note that still carries a marker — the only refusal
 #   that is actionable ("needs recovery, not ours to touch"); the un-marked bulk is
 #   only counted, never listed.
 secret-run npm run retranscribe -- --all             # recover any failed transcript
+#   exit 0 = everything it was ALLOWED to do succeeded (notes the gate blocked are
+#   named loudly but are NOT failures — that refusal is permanent by design);
+#   exit 1 = a real failure (STT exhausted, write error, unknown attachment, unreadable vault);
+#   exit 2 = bad usage.
 #   --dry-run is NOT free: 1 STT + 1 title/tag LLM call per eligible note
 ```
 
@@ -100,6 +108,15 @@ secret-run npm run retranscribe -- --all             # recover any failed transc
 - **All transcription goes through `transcribe()` in `src/stt.js`** — never call a vendor
   directly. Retry/rotation/attempt-cap are data-driven from `config.js`; add a vendor in
   `stt-providers.js` and name it in `STT_PROVIDER_ORDER`.
+- **TWO log files, one writer each.** `DATA_DIR/digest.log` is the app's, written only by
+  `src/log.js`, rotated and 0600. `DATA_DIR/digest-service.log` is launchd's capture of
+  stdout/stderr and exists to catch what never reaches the logger (an early FATAL, an uncaught
+  stack) — if it is non-empty, read it. They must NEVER be the same path: one shared inode plus
+  rename-rotation orphans launchd's fd, and the crash output is exactly what goes missing. A test
+  named "THE SERVICE AND THE APP MUST NEVER SHARE A LOG FILE" enforces it. `log.js` therefore
+  mirrors to the console only on a TTY (or `DIGEST_LOG_CONSOLE=1`), so the launchd-owned file
+  never gets an unrotatable duplicate of the private log — but it always falls back to the
+  console if the file write fails, because losing the file must not mean losing the line.
 - **The log is private and bounded** (`src/log.js`): created mode 0600 in a 0700 dir and
   size-capped with `LOG_MAX_BYTES`/`LOG_RETAIN` rotation, because it deliberately records raw
   model output (that is what makes an unparseable response diagnosable) and so holds
