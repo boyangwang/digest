@@ -3,11 +3,11 @@
 `CLAUDE.md` is a symlink to this file - edit this one.
 
 ## 📍 Status + Next Steps · (updated 2026-11-05)
-- **Working on:** v1.3 - voice durability (ACK-first, 3-minute retry ladder, never silent) +
-  the **Lark transport** ("Sleep Digest" app). Branch `feat/lark-and-voice-durability`.
-- **Status:** ✅ implemented, `npm test` green, E2E-verified on live Telegram + live Lark, and
-  **deployed from the branch checkout** (both launchd services). Not merged to `main` yet:
-  awaiting Boyang's OK (PR open).
+- **Working on:** nothing in flight. v1.3 - voice durability (ACK-first, 3-minute retry
+  ladder, never silent) + the **Lark transport** ("Sleep Digest" app) - merged to `main`
+  (boyangwang/digest#2, 2026-11-05).
+- **Status:** ✅ `npm test` green, E2E-verified on live Telegram + live Lark, and **deployed
+  from the `main` checkout** (both launchd services).
 - **Done recently:** root cause of the silent voice notes found and fixed (Node's 250ms Happy
   Eyeballs window, decision 15); media now ACKed before any network call (decision 16);
   Lark bot created, configured, published, deployed (decisions 18-20).
