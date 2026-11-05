@@ -1,7 +1,8 @@
 # Reusable prompt — Digest title + tags generation
 
 > Written by Opus 4.8 for Digest v1.2, by studying Boyang's 552 existing note titles in
-> `Heresy-Anthology/digest`. The runtime model (open-source, GLM 5.2 on Tencent TokenHub)
+> `Heresy-Anthology/digest`. The runtime model (OpenAI `gpt-5.4-mini` since 2026-11-06; GLM 5.2 on
+> Tencent TokenHub before that)
 > is fed the SYSTEM prompt below + the compiled note content, and must return the JSON object.
 > Code — not the model — prepends the timestamp and sanitizes the filename.
 

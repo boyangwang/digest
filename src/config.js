@@ -24,23 +24,45 @@ export const DATA_DIR =
   process.env.DIGEST_DATA_DIR || join(homedir(), ".local", "share", "digest");
 export const PENDING_DIR = join(DATA_DIR, "pending");
 
-// --- LLM: Tencent TokenHub (OpenAI Chat Completions) ---
+// --- LLM: title + tags, image captions (Chat Completions API) -------------
+// Providers in order, rotated by the same ladder as STT (src/retry.js):
+//   openai   - the default since 2026-11-06. Key: OPENAI_API_KEY, which the sops
+//              store already ships for the STT fallback below. gpt-5.4-mini is
+//              current-gen, vision-capable and cheap ($0.75 in / $4.50 out per 1M
+//              tokens, developers.openai.com/api/docs/pricing): a title is ~1-2 cents.
+//   tokenhub - Tencent TokenHub, glm-5.2 + glm-5v-turbo. Both vault keys have
+//              returned 401 since 2026-09-13; kept so it can come back by env alone:
+//              DIGEST_LLM_PROVIDERS=openai,tokenhub
+export const LLM_PROVIDER_ORDER = (process.env.DIGEST_LLM_PROVIDERS || "openai")
+  .split(",")
+  .map((s) => s.trim().toLowerCase())
+  .filter(Boolean);
+export const OPENAI_LLM_BASE_URL = process.env.DIGEST_OPENAI_BASE_URL || "https://api.openai.com/v1";
+export const TITLE_MODEL = process.env.DIGEST_TITLE_MODEL || "gpt-5.4-mini";
+export const VISION_MODEL = process.env.DIGEST_VISION_MODEL || "gpt-5.4-mini";
+// GPT-5 models reason before answering. The title is where that is worth paying for.
+export const TITLE_REASONING_EFFORT = process.env.DIGEST_TITLE_REASONING_EFFORT || "medium";
+export const VISION_REASONING_EFFORT = process.env.DIGEST_VISION_REASONING_EFFORT || "low";
+// CAPS, not targets. For GPT-5 models they include the hidden reasoning tokens, so
+// they must leave room for it: an answer starved by reasoning comes back empty.
+export const TITLE_MAX_TOKENS = Number(process.env.DIGEST_TITLE_MAX_TOKENS || 16000);
+export const VISION_MAX_TOKENS = Number(process.env.DIGEST_VISION_MAX_TOKENS || 4000);
+
 export const TOKENHUB_BASE_URL =
   process.env.TOKENHUB_BASE_URL ||
   "https://tokenhub-intl.tencentcloudmaas.com/v1";
 export const TOKENHUB_API_KEY = process.env.TENCENT_TOKENHUB_API_KEY || "";
-export const TITLE_MODEL = process.env.DIGEST_TITLE_MODEL || "glm-5.2";
-export const VISION_MODEL = process.env.DIGEST_VISION_MODEL || "glm-5v-turbo";
+export const TOKENHUB_TITLE_MODEL = process.env.DIGEST_TOKENHUB_TITLE_MODEL || "glm-5.2";
+export const TOKENHUB_VISION_MODEL = process.env.DIGEST_TOKENHUB_VISION_MODEL || "glm-5v-turbo";
 // Generous CAP (not a target); glm-5.2 supports up to 128k output.
-export const TITLE_MAX_TOKENS = Number(process.env.DIGEST_TITLE_MAX_TOKENS || 100000);
-export const VISION_MAX_TOKENS = Number(process.env.DIGEST_VISION_MAX_TOKENS || 2000);
+export const TOKENHUB_TITLE_MAX_TOKENS = Number(process.env.DIGEST_TOKENHUB_TITLE_MAX_TOKENS || 100000);
 
 // --- LLM retry ladder (same mechanism as STT, see src/retry.js) -----------
 // The title/tag call is not a nicety any more: `npm run retranscribe` cannot commit
 // a recovered transcript without it, so a single-shot call to a flaky vendor would
 // reintroduce exactly the transient-blip failure this work exists to remove.
 export const LLM_MAX_ATTEMPTS = Number(process.env.DIGEST_LLM_MAX_ATTEMPTS || 4);
-// glm-5.2 runs with thinking enabled, so a legitimate title call is slow.
+// Title models reason before answering, so a legitimate title call is slow.
 export const LLM_ATTEMPT_TIMEOUT_MS = Number(process.env.DIGEST_LLM_ATTEMPT_TIMEOUT_MS || 90000);
 export const LLM_BACKOFF_BASE_MS = Number(process.env.DIGEST_LLM_BACKOFF_BASE_MS || 1000);
 export const LLM_BACKOFF_MAX_MS = Number(process.env.DIGEST_LLM_BACKOFF_MAX_MS || 8000);

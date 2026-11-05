@@ -1,27 +1,98 @@
-// LLM — Tencent TokenHub (OpenAI Chat Completions).
-//   glm-5.2      → title + bilingual tags (system prompt = prompts/title-and-tags.md)
-//   glm-5v-turbo → per-image bilingual caption (feeds title/tags at compile time)
+// LLM - title + bilingual tags, and per-image captions, over the Chat Completions API.
+// Providers, in config.LLM_PROVIDER_ORDER (DIGEST_LLM_PROVIDERS):
+//   openai   gpt-5.4-mini for both (the default since 2026-11-06)
+//   tokenhub glm-5.2 (title+tags) + glm-5v-turbo (vision) on Tencent TokenHub;
+//            its keys have returned 401 since 2026-09-13, so it is opt-in by env.
+// The title system prompt is prompts/title-and-tags.md.
 import { readFile } from "node:fs/promises";
 import OpenAI from "openai";
 import {
-  TOKENHUB_BASE_URL,
-  TOKENHUB_API_KEY,
+  LLM_PROVIDER_ORDER,
+  OPENAI_LLM_BASE_URL,
+  OPENAI_API_KEY,
   TITLE_MODEL,
   VISION_MODEL,
+  TITLE_REASONING_EFFORT,
+  VISION_REASONING_EFFORT,
   TITLE_MAX_TOKENS,
   VISION_MAX_TOKENS,
+  TOKENHUB_BASE_URL,
+  TOKENHUB_API_KEY,
+  TOKENHUB_TITLE_MODEL,
+  TOKENHUB_VISION_MODEL,
+  TOKENHUB_TITLE_MAX_TOKENS,
   LLM_MAX_ATTEMPTS,
   LLM_ATTEMPT_TIMEOUT_MS,
   LLM_BACKOFF_BASE_MS,
   LLM_BACKOFF_MAX_MS,
   LLM_TOTAL_BUDGET_MS,
 } from "./config.js";
-import { runWithRetry } from "./retry.js";
+import { runWithRetry, isOutOfCredit } from "./retry.js";
 import { log } from "./log.js";
 
-// Dummy key keeps the SDK from throwing at construction when unconfigured; every
-// call site guards on TOKENHUB_API_KEY before actually using the client.
-const client = new OpenAI({ baseURL: TOKENHUB_BASE_URL, apiKey: TOKENHUB_API_KEY || "no-key" });
+/**
+ * Each provider owns its key, endpoint and request shape. The shapes are NOT
+ * interchangeable: GPT-5 models reject `max_tokens` (they take
+ * `max_completion_tokens`, which also caps the hidden reasoning) and reject any
+ * parameter they do not know, such as GLM's `thinking`.
+ */
+export const LLM_PROVIDERS = {
+  openai: {
+    name: "openai",
+    key: () => OPENAI_API_KEY,
+    baseURL: OPENAI_LLM_BASE_URL,
+    titleBody: (messages) => ({
+      model: TITLE_MODEL,
+      max_completion_tokens: TITLE_MAX_TOKENS,
+      reasoning_effort: TITLE_REASONING_EFFORT,
+      // JSON mode: the answer is always one parseable object. It requires the word
+      // "JSON" in the messages, which the OUTPUT CONTRACT in systemPrompt() supplies.
+      response_format: { type: "json_object" },
+      messages,
+    }),
+    visionBody: (messages) => ({
+      model: VISION_MODEL,
+      max_completion_tokens: VISION_MAX_TOKENS,
+      reasoning_effort: VISION_REASONING_EFFORT,
+      messages,
+    }),
+  },
+  tokenhub: {
+    name: "tokenhub",
+    key: () => TOKENHUB_API_KEY,
+    baseURL: TOKENHUB_BASE_URL,
+    titleBody: (messages) => ({
+      model: TOKENHUB_TITLE_MODEL,
+      max_tokens: TOKENHUB_TITLE_MAX_TOKENS,
+      thinking: { type: "enabled" },
+      reasoning_effort: "high",
+      messages,
+    }),
+    visionBody: (messages) => ({ model: TOKENHUB_VISION_MODEL, max_tokens: VISION_MAX_TOKENS, messages }),
+  },
+};
+
+/** The providers in `order` that exist and have a key, in that order. */
+export function configuredProviders(order = LLM_PROVIDER_ORDER) {
+  const out = [];
+  for (const name of order) {
+    const p = LLM_PROVIDERS[name];
+    if (!p) log.warn(`Unknown LLM provider "${name}" in DIGEST_LLM_PROVIDERS - ignored`);
+    else if (p.key()) out.push(p);
+  }
+  return out;
+}
+
+const clients = new Map();
+function clientFor(provider) {
+  if (!clients.has(provider.name)) {
+    clients.set(provider.name, new OpenAI({ baseURL: provider.baseURL, apiKey: provider.key() }));
+  }
+  return clients.get(provider.name);
+}
+/** The real transport. Tests pass `createImpl` with the same (body, reqOpts, providerName). */
+const realCreate = (body, reqOpts, providerName) =>
+  clientFor(LLM_PROVIDERS[providerName]).chat.completions.create(body, reqOpts);
 
 const PROMPT_URL = new URL("../prompts/title-and-tags.md", import.meta.url);
 let _systemPrompt = null;
@@ -64,37 +135,51 @@ function extractJSON(text) {
   return null;
 }
 
-/** Caption one image via glm-5v-turbo. Returns a short bilingual caption or null. */
-export async function captionImage(imagePath, mime = "image/jpeg") {
-  if (!TOKENHUB_API_KEY) return null;
+/**
+ * Caption one image. Returns a short bilingual caption, or null when no provider is
+ * configured or every provider failed: a caption is a nicety, the image itself is
+ * already saved, so this never throws into the media job.
+ */
+export async function captionImage(imagePath, mime = "image/jpeg", { createImpl = realCreate } = {}) {
+  const providers = configuredProviders();
+  if (!providers.length) return null;
+  let dataUrl;
   try {
     const buf = await readFile(imagePath);
-    const dataUrl = `data:${mime};base64,${buf.toString("base64")}`;
-    const res = await client.chat.completions.create({
-      model: VISION_MODEL,
-      max_tokens: VISION_MAX_TOKENS,
-      messages: [
-        {
-          role: "user",
-          content: [
-            {
-              type: "text",
-              text:
-                "Describe this image concisely for journal tagging: any visible text, " +
-                "people, place, notable objects, and overall subject. Reply bilingual " +
-                "(English then 中文), 1-3 sentences. No preamble.",
-            },
-            { type: "image_url", image_url: { url: dataUrl } },
-          ],
-        },
-      ],
-    });
-    const text = res.choices?.[0]?.message?.content?.trim() || "";
-    return text || null;
+    dataUrl = `data:${mime};base64,${buf.toString("base64")}`;
   } catch (e) {
-    log.warn(`Vision caption failed: ${e?.message || e}`);
+    log.warn(`Vision caption: cannot read ${imagePath}: ${e?.message || e}`);
     return null;
   }
+  const messages = [
+    {
+      role: "user",
+      content: [
+        {
+          type: "text",
+          text:
+            "Describe this image concisely for journal tagging: any visible text, " +
+            "people, place, notable objects, and overall subject. Reply bilingual " +
+            "(English then 中文), 1-3 sentences. No preamble.",
+        },
+        { type: "image_url", image_url: { url: dataUrl } },
+      ],
+    },
+  ];
+  for (const p of providers) {
+    try {
+      const res = await createImpl(p.visionBody(messages), { timeout: LLM_ATTEMPT_TIMEOUT_MS }, p.name);
+      const text = res?.choices?.[0]?.message?.content?.trim() || "";
+      if (text) {
+        log.info(`Vision caption via ${p.name} (${text.length} chars)`);
+        return text;
+      }
+      log.warn(`Vision caption: ${p.name} returned no text`);
+    } catch (e) {
+      log.warn(`Vision caption failed (${p.name}): ${e?.message || e}`);
+    }
+  }
+  return null;
 }
 
 /** The model answered, but not with anything we can use. Retryable: models wobble. */
@@ -110,19 +195,25 @@ const statusOf = (err) => err?.status ?? err?.response?.status ?? err?.cause?.st
 
 /**
  * Retryability for the title model.
- *   429 / 5xx / network / timeout — transient, retry.
- *   an unparseable answer          — retry: model nondeterminism is exactly what a
+ *   429 / 5xx / network / timeout - transient, retry.
+ *   an unparseable answer          - retry: model nondeterminism is exactly what a
  *                                   second attempt fixes, and the attempt cap still
  *                                   terminates a persistently broken response.
- *   400 / 401 / 403 and other 4xx  — terminal: our request is the problem, and
- *                                   repeating it verbatim cannot change the answer.
+ *   429 out of credit              - the account has no money (isOutOfCredit).
+ *                                   Not transient: drop the provider like a bad key.
+ *   400 / 401 / 403 and other 4xx  - drop this provider: it will not take this
+ *                                   request (bad key, no access, unknown model, a
+ *                                   parameter it does not support), but another
+ *                                   provider might. With one provider configured
+ *                                   this ends the ladder after exactly one call.
  */
 export function classifyTitleError(err) {
   if (err instanceof LlmUnparseableError) return { action: "retry" };
   const s = statusOf(err);
   if (typeof s === "number") {
+    if (s === 429 && isOutOfCredit(err)) return { action: "drop-vendor", reason: "rejected" };
     if (s === 429 || s >= 500) return { action: "retry" };
-    if (s >= 400) return { action: "stop", reason: "rejected" };
+    if (s >= 400) return { action: "drop-vendor", reason: "rejected" };
   }
   return { action: "retry" };
 }
@@ -133,7 +224,7 @@ export function classifyTitleError(err) {
  *
  * Goes through the SAME attempt ladder as transcription (src/retry.js), because
  * `npm run retranscribe` cannot commit a recovered transcript without a real title:
- * one transient TokenHub blip would otherwise leave the note untouched every time.
+ * one transient provider blip would otherwise leave the note untouched every time.
  * Degrades gracefully at the end of the ladder rather than throwing into `/done`.
  *
  * `fallback` is true when the model never produced a usable answer (no key, every
@@ -142,35 +233,31 @@ export function classifyTitleError(err) {
  * Chinese-only with no tags, which is indistinguishable from the fallback by shape.
  */
 export async function generateTitleAndTags(noteText, opts = {}) {
-  const { createImpl, ...ladder } = opts;
-  const create = createImpl || ((body, reqOpts) => client.chat.completions.create(body, reqOpts));
+  const { createImpl = realCreate, ...ladder } = opts;
 
   const fallback = () => {
     const firstLine = (noteText.split("\n").find((l) => l.trim()) || "Untitled").trim();
     return { title: { zh: firstLine.slice(0, 60), en: "" }, tags: [], fallback: true };
   };
-  if (!TOKENHUB_API_KEY) {
-    log.warn("No TENCENT_TOKENHUB_API_KEY — using fallback title");
+  const providers = configuredProviders();
+  if (!providers.length) {
+    log.warn(`No key for any LLM provider in [${LLM_PROVIDER_ORDER.join(", ")}] - using fallback title`);
     return fallback();
   }
+  const messages = [
+    { role: "system", content: await systemPrompt() },
+    { role: "user", content: noteText },
+  ];
 
   const r = await runWithRetry({
     label: "llm-title",
-    providers: [{ name: "tokenhub" }],
-    call: async (_provider, { timeoutMs }) => {
-      const res = await create(
-        {
-          model: TITLE_MODEL,
-          max_tokens: TITLE_MAX_TOKENS,
-          thinking: { type: "enabled" },
-          reasoning_effort: "high",
-          messages: [
-            { role: "system", content: await systemPrompt() },
-            { role: "user", content: noteText },
-          ],
-        },
-        // maxRetries: 0 — this ladder is the only retry; the SDK's own would multiply it.
-        { timeout: timeoutMs, maxRetries: 0 }
+    providers,
+    call: async (provider, { timeoutMs }) => {
+      const res = await createImpl(
+        provider.titleBody(messages),
+        // maxRetries: 0 - this ladder is the only retry; the SDK's own would multiply it.
+        { timeout: timeoutMs, maxRetries: 0 },
+        provider.name
       );
       const raw = res?.choices?.[0]?.message?.content?.trim() || "";
       const parsed = extractJSON(raw);
@@ -191,7 +278,7 @@ export async function generateTitleAndTags(noteText, opts = {}) {
   });
 
   if (!r.ok) {
-    log.error(`Title LLM gave up: reason=${r.reason} after ${r.attempts} attempt(s) — using fallback title`);
+    log.error(`Title LLM gave up: reason=${r.reason} after ${r.attempts} attempt(s) - using fallback title`);
     return fallback();
   }
   const parsed = r.value;
@@ -200,6 +287,6 @@ export async function generateTitleAndTags(noteText, opts = {}) {
         .filter((t) => t && t.key)
         .map((t) => ({ key: String(t.key).trim(), value: String(t.value ?? "").trim() }))
     : [];
-  log.info(`Title generated in ${r.attempts} attempt(s) (${tags.length} tags)`);
+  log.info(`Title generated via ${r.provider} in ${r.attempts} attempt(s) (${tags.length} tags)`);
   return { title: { zh: parsed.title_zh || "", en: parsed.title_en || "" }, tags, fallback: false };
 }

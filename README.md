@@ -27,10 +27,10 @@ LLM-generated title and tags. "Dear diary", multimodal.
    preserved.**
 3. Tap **✅ Done** or send `/done` → the bot compiles everything into one note:
    - **Title** = `YYYYMMDD-HHMM` (deterministic) + a longer, summarizing bilingual title in
-     your voice (`glm-5.2`), sanitized by code.
-   - **Properties** = dynamic bilingual tags (`glm-5.2`) + `CREATEDAT` + full `TITLE标题` +
+     your voice (OpenAI `gpt-5.4-mini`), sanitized by code.
+   - **Properties** = dynamic bilingual tags (same model) + `CREATEDAT` + full `TITLE标题` +
      `GENERATOR生成器: digest/1` (the provenance stamp that marks the note as this bot's).
-   - Images are captioned by `glm-5v-turbo` so the title/tags reflect them.
+   - Images are captioned by `gpt-5.4-mini` so the title/tags reflect them.
 
 ## Architecture (`src/`)
 
@@ -57,7 +57,7 @@ LLM-generated title and tags. "Dear diary", multimodal.
 | `util.js` | SGT timestamps, filename sanitize + byte-cap (pure) |
 | `stt.js` | transcription with retry + vendor rotation (the durability layer) |
 | `stt-providers.js` | the STT vendors behind one normalized interface |
-| `llm.js` | TokenHub `glm-5.2` (title+tags) + `glm-5v-turbo` (vision) |
+| `llm.js` | title+tags and image captions; providers OpenAI (default) / TokenHub |
 | `config.js` | paths, models, keys |
 | `prompts/title-and-tags.md` | the reusable title/tags prompt (the app's voice) |
 | `scripts/retranscribe.mjs` | re-run transcription for a saved attachment and patch the note |

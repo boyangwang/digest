@@ -361,3 +361,14 @@ test("unreadable audio fails fast without calling any vendor", async () => {
   assert.equal(r.reason, STT_FAIL.UNREADABLE);
   assert.equal(h.calls.length, 0);
 });
+
+test("classify(): a vendor with no credit left is dropped, not retried as a rate limit", () => {
+  // OpenAI's body for an empty balance (seen on the vault key, 2026-11-06). Retrying it
+  // only burns every other attempt of the ladder on a vendor that cannot answer.
+  const body = JSON.stringify({
+    error: { message: "You have no credits remaining.", type: "insufficient_quota", code: "credit_balance_exhausted" },
+  });
+  assert.equal(classify(new SttHttpError("openai", 429, body)).action, "drop-vendor");
+  assert.equal(classify(new SttHttpError("openai", 429, '{"error":{"code":"insufficient_quota"}}')).action, "drop-vendor");
+  assert.equal(classify(new SttHttpError("openai", 429, '{"error":{"message":"Rate limit reached"}}')).action, "retry");
+});

@@ -2,7 +2,7 @@
 
 `CLAUDE.md` is a symlink to this file - edit this one.
 
-## 📍 Status + Next Steps · (updated 2026-11-05)
+## 📍 Status + Next Steps · (updated 2026-11-06)
 - **Working on:** nothing in flight. v1.3 - voice durability (ACK-first, 3-minute retry
   ladder, never silent) + the **Lark transport** ("Sleep Digest" app) - merged to `main`
   (boyangwang/digest#2, 2026-11-05).
@@ -11,15 +11,19 @@
 - **Done recently:** root cause of the silent voice notes found and fixed (Node's 250ms Happy
   Eyeballs window, decision 15); media now ACKed before any network call (decision 16);
   Lark bot created, configured, published, deployed (decisions 18-20).
-- **Known blockers:** **TokenHub key is dead** (401 since 2026-09-13; both vault keys,
-  incl. `_EMAILTRIAGE`): every title since then is the "spoken ..." fallback and image captions
-  fail. Needs a new key from the Tencent console (Boyang), then `secret-put
-  TENCENT_TOKENHUB_API_KEY` + `bash launchd/deploy.sh`. Obsidian must stay running on the Mini
-  for Sync.
+- **Known blockers:** titles + captions moved from dead TokenHub to **OpenAI** (decision 21),
+  but the vault's `OPENAI_API_KEY` has **no credits** (429 `credit_balance_exhausted`, checked
+  2026-11-06) - which also means the STT fallback has been dead. Needs a funded key:
+  `pbpaste | secret-put OPENAI_API_KEY`, redeploy, then `secret-run node scripts/llm-smoke.mjs`
+  must print SMOKE OK. Obsidian must stay running on the Mini for Sync.
 - **Next step:** Boyang: send one real voice note on Lark and one on Telegram; approve → merge
   the PR to `main` (the services keep running from this checkout either way).
 
 ### Log (newest first)
+- 2026-11-06 - Titles/tags + image captions switched from Tencent TokenHub (401 since
+  2026-09-13; 11 notes got "spoken ..." fallback titles) to OpenAI `gpt-5.4-mini` (decision
+  21). Live smoke test exposed that the vault OpenAI key has no credit; a no-credit 429 is now
+  dropped after one call instead of retried (title and STT). New `scripts/llm-smoke.mjs`.
 - 2026-11-05 — v1.3: voice notes that "just gave up" traced to `fetch failed` x7 in the log
   (2026-09-24..10-29) = Happy Eyeballs connect timeouts; fixed (net-tuning) and the pipeline
   rebuilt ACK-first with download/STT retry ladders, retry notices, Retry button, restart
@@ -41,7 +45,8 @@
    per attempt (`src/stt.js`). MiniMax was the original suggestion but publishes **no ASR
    endpoint** (speech API is T2A/voice-clone only), and TokenHub exposes no ASR model —
    re-verified 2026-08-21. OpenAI needs no new credential: `OPENAI_API_KEY` is already in the
-   same sops store the launchd service loads. LLM = **TokenHub** `glm-5.2` (title+tags) + `glm-5v-turbo` (vision), via the `openai` npm client pointed at TokenHub (NOT openai.com).
+   same sops store the launchd service loads. LLM: see decision 21 (was TokenHub `glm-5.2` +
+   `glm-5v-turbo` until 2026-11-06).
 4. Title = deterministic `YYYYMMDD-HHMM` + LLM title, **summarizing in Boyang's voice, bilingual `<zh> <en>`**, code-sanitized + byte-capped (≤200 bytes for the title portion). Full title always mirrored in `TITLE标题`.
 5. Properties = **dynamic, LLM-chosen** bilingual `English中文` tags (NOT a fixed schema) + always `CREATEDAT: YYYY-MM-DD HH:MM:SS` + always `TITLE标题` (+ the provenance stamp, decision 12).
 6. Two Telegram replies per input, both carrying the serial `#N`; ACK = `✓ ACK #N` with the inline Done button attached; ACK is atomic-with-persistence; per-chat serial queue = linear/deterministic.
@@ -105,6 +110,15 @@
    (`im.message.receive_v1`, `card.action.trigger`). Credentials in the vault as
    `DIGEST_LARK_APP_ID` / `DIGEST_LARK_APP_SECRET`. Console automation helpers:
    `scripts/lark-console/`.
+21. **Title/tags + image captions = OpenAI `gpt-5.4-mini`** (2026-11-06, Boyang's call after
+   TokenHub's keys died). Providers rotate like STT (`DIGEST_LLM_PROVIDERS`, default
+   `openai`; `openai,tokenhub` re-enables GLM by env alone), each with its OWN request shape:
+   GPT-5 models reject `max_tokens` and GLM's `thinking` with a 400, so `src/llm.js` keeps one
+   body builder per provider. Titles use JSON mode + reasoning `medium`; captions reasoning
+   `low`. A 429 whose type is `insufficient_quota` (`isOutOfCredit`, `src/retry.js`) means
+   the account is empty, not busy: drop the vendor, never retry it. Verify any key/model
+   change with a REAL call (`scripts/llm-smoke.mjs`): `GET /v1/models` returned 200 for a key
+   with zero credit. `test/setup.mjs` blanks every vendor key so no test can spend money.
 
 ## What this is
 Telegram bot: send text/voice/photos/files in any order → tap ✅ Done / `/done` → one bilingual
@@ -112,7 +126,7 @@ Markdown note in the Obsidian vault. See `README.md` and `specs/prd-digest-v1.2.
 
 ## Stack
 Node ≥22 (ESM), grammY (Telegram), `@larksuiteoapi/node-sdk` (Lark long connection only),
-`openai` client → Tencent TokenHub, `yaml`. STT = ElevenLabs Scribe v2
+`openai` client → OpenAI (title/tags + captions, decision 21), `yaml`. STT = ElevenLabs Scribe v2
 → OpenAI `gpt-4o-transcribe` (plain `fetch`/`FormData`, no SDK).
 Tests: `node --test` via `npm test`, which loads `test/setup.mjs` with `--import` to pin
 `DIGEST_LOG_PATH` at a temp dir — otherwise the suite appends to the live app log.
@@ -182,7 +196,8 @@ secret-run npm run retranscribe -- --all             # recover any failed transc
 
 ## The title voice
 `prompts/title-and-tags.md` — authored from Boyang's 552 real note titles. It IS the reusable
-prompt fed to `glm-5.2`. Keep it as the single source of truth for title/tag style.
+prompt fed to the title model (`gpt-5.4-mini`). Keep it as the single source of truth for
+title/tag style.
 
 ## Maintaining this file
 
