@@ -13,6 +13,21 @@ import { log } from "./log.js";
 
 export const truncate = (s, n = 300) => String(s ?? "").replace(/\s+/g, " ").slice(0, n);
 
+/**
+ * An error's message plus its `.cause` chain. Node's fetch reports every network
+ * failure as the bare "fetch failed" and hides the real reason (ECONNRESET, a
+ * connect timeout, a TLS error) one or two `.cause` levels down - which is exactly
+ * why seven lost voice notes left nothing in the log but "fetch failed".
+ */
+export function errorDetail(err) {
+  const parts = [];
+  for (let e = err, depth = 0; e && depth < 4; e = e.cause, depth++) {
+    const code = e.code && !String(e.message || "").includes(e.code) ? `${e.code}: ` : "";
+    parts.push(`${code}${e.message || e}`);
+  }
+  return parts.join(" <- ");
+}
+
 /** base * 2^(n-1), capped, then jittered ±25%. `n` is 1-based. */
 export function backoffMs(n, { base, max, rand = Math.random } = {}) {
   const flat = Math.min(base * 2 ** (n - 1), max);
@@ -50,6 +65,9 @@ export async function runWithRetry({
   backoffMaxMs,
   exhaustedReason,
   rejectedReason,
+  // Called (never awaited, never allowed to throw) after a failed attempt that will
+  // be followed by another one - the hook the chat uses to say "retrying 2/6".
+  onRetry,
   sleepImpl = wait,
   now = () => Date.now(),
   rand = Math.random,
@@ -98,11 +116,22 @@ export async function runWithRetry({
         stopReason = reason;
         break;
       }
+      const notify = (nextDelayMs) => {
+        if (!onRetry || attempt >= maxAttempts || !live.length) return;
+        try {
+          Promise.resolve(
+            onRetry({ attempt, maxAttempts, provider: provider.name, status, detail: truncate(detail, 160), nextDelayMs })
+          ).catch(() => {});
+        } catch {
+          /* a progress hook must never break the ladder */
+        }
+      };
       if (action === "drop-vendor") {
         // Removing at `cursor % live.length` leaves the cursor pointing at the
         // NEXT live provider, so no attempt is wasted re-picking the dead one.
         live.splice(cursor % live.length, 1);
         stopReason = reason; // only survives if no other provider works out
+        notify(0);
         continue; // a different provider needs no cool-off
       }
       stopReason = null;
@@ -112,6 +141,7 @@ export async function runWithRetry({
           backoffMs(attempt, { base: backoffBaseMs, max: backoffMaxMs, rand }),
           Math.max(0, totalBudgetMs - (now() - startedAt))
         );
+        notify(nap);
         if (nap > 0) await sleepImpl(nap);
       }
     }

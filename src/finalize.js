@@ -1,7 +1,7 @@
 // Finalize — on /done: assemble → title/tags → move attachments → compile → write note.
 import { promises as fs } from "node:fs";
 import { join, extname, basename } from "node:path";
-import { DIGEST_DIR, ATTACHMENTS_DIR, STT_TOTAL_BUDGET_MS } from "./config.js";
+import { DIGEST_DIR, ATTACHMENTS_DIR, JOB_TOTAL_BUDGET_MS } from "./config.js";
 import { loadPending, withPendingDigest, pendingAttachmentPath } from "./store.js";
 import { waitForTranscriptions } from "./transcriptions.js";
 import { generateTitleAndTags } from "./llm.js";
@@ -17,13 +17,13 @@ export function buildLLMInput(blocks) {
     else if (b.type === "image")
       lines.push(`[image] ${b.visionCaption?.trim() || b.userCaption?.trim() || "(no description)"}`);
     else if (b.type === "file")
-      lines.push(`[file: ${b.attachment}] ${b.userCaption?.trim() || ""}`.trim());
+      lines.push(`[file: ${b.attachment || b.origName || "not downloaded"}] ${b.userCaption?.trim() || ""}`.trim());
   }
   return lines.filter(Boolean).join("\n\n");
 }
 
 /** Move a staged attachment into the vault ATTACHMENTS dir, collision-safe. Returns final name. */
-async function moveAttachment(chatId, name) {
+export async function moveAttachment(chatId, name) {
   await fs.mkdir(ATTACHMENTS_DIR, { recursive: true });
   const src = pendingAttachmentPath(chatId, name);
   let finalName = name;
@@ -102,7 +102,7 @@ async function writeNote(filename, markdown) {
  *
  * @returns {Promise<{filename:string, fullTitle:string}|null>} null if nothing to compile.
  */
-export async function finalizeDigest(chatId, { transcriptionWaitMs = STT_TOTAL_BUDGET_MS } = {}) {
+export async function finalizeDigest(chatId, { transcriptionWaitMs = JOB_TOTAL_BUDGET_MS } = {}) {
   if (!(await loadPending(chatId))?.blocks?.length) return null;
 
   await waitForTranscriptions(chatId, { timeoutMs: transcriptionWaitMs });

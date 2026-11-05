@@ -1,6 +1,7 @@
-// Entry point — start the Digest bot (long polling).
+// Entry point — start the Digest bot on Telegram (long polling).
+// The Lark transport is a separate process: src/lark-index.js.
 import { BOT_TOKEN } from "./config.js";
-import { buildBot } from "./bot.js";
+import { buildBot, resumeTelegramJobs, isTelegramChat } from "./bot.js";
 import { listPendingChats } from "./store.js";
 import { log } from "./log.js";
 
@@ -12,10 +13,20 @@ if (!BOT_TOKEN) {
 const bot = buildBot();
 
 async function main() {
-  const pending = await listPendingChats();
+  const pending = (await listPendingChats()).filter(isTelegramChat);
   if (pending.length) log.info(`Resuming ${pending.length} pending digest(s): ${pending.join(", ")}`);
 
-  await bot.api.setMyCommands([{ command: "done", description: "Compile the current digest into a note" }]);
+  // Best-effort: a network blip here used to be FATAL (2026-09-11), restarting the
+  // whole service over a cosmetic command menu.
+  await bot.api
+    .setMyCommands([{ command: "done", description: "Compile the current digest into a note" }])
+    .catch((e) => log.warn(`setMyCommands failed (non-fatal): ${e?.message || e}`));
+
+  const resumed = await resumeTelegramJobs(bot).catch((e) => {
+    log.error(`resume failed: ${e?.stack || e}`);
+    return 0;
+  });
+  if (resumed) log.info(`Resumed ${resumed} unfinished media job(s)`);
 
   const stop = (sig) => {
     log.info(`${sig} — stopping`);

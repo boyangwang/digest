@@ -94,6 +94,7 @@ export async function transcribe(audioPath, opts = {}) {
     totalBudgetMs = STT_TOTAL_BUDGET_MS,
     providerOrder = STT_PROVIDER_ORDER,
     mime,
+    onRetry,
   } = opts;
 
   const live = resolveProviders(providerOrder).filter((p) => p.isConfigured());
@@ -135,6 +136,7 @@ export async function transcribe(audioPath, opts = {}) {
     backoffMaxMs: STT_BACKOFF_MAX_MS,
     exhaustedReason: STT_FAIL.EXHAUSTED,
     rejectedReason: STT_FAIL.REJECTED,
+    onRetry,
     ...(sleepImpl ? { sleepImpl } : {}),
     ...(now ? { now } : {}),
     ...(rand ? { rand } : {}),

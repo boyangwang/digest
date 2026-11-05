@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- The Digest bot on Lark ("Sleep Digest" app). Same code base as the Telegram
+       service (network.deardiary.digest), separate process: a fault in one transport
+       can never take the other down. -->
+  <key>Label</key>
+  <string>network.deardiary.digest-lark</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/sops</string>
+    <string>exec-env</string>
+    <string>/Users/claw/.config/secrets/services.enc.env</string>
+    <string>/opt/homebrew/bin/node /Users/claw/Code/digest-bot/src/lark-index.js</string>
+  </array>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>SOPS_AGE_KEY_FILE</key>
+    <string>/Users/claw/.config/sops/age/keys.txt</string>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <!-- One writer per log file: this process gets its OWN app log, never the
+         Telegram process's digest.log (two size-tracking rotators on one file
+         would corrupt each other's rotation). -->
+    <key>DIGEST_LOG_PATH</key>
+    <string>/Users/claw/.local/share/digest/digest-lark.log</string>
+    <!-- Boyang's open_id as seen by the Sleep Digest app (open_ids are per-app). -->
+    <key>DIGEST_LARK_ALLOWED_OPEN_IDS</key>
+    <string>__BOYANG_SLEEP_DIGEST_OPEN_ID__</string>
+  </dict>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/claw/Code/digest-bot</string>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <!-- A crash loop (e.g. missing credentials) must not spin: wait between restarts. -->
+  <key>ThrottleInterval</key>
+  <integer>30</integer>
+
+  <!-- launchd's own net for whatever escapes the logger. Non-empty = read it. -->
+  <key>StandardOutPath</key>
+  <string>/Users/claw/.local/share/digest/digest-lark-service.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/claw/.local/share/digest/digest-lark-service.log</string>
+</dict>
+</plist>
