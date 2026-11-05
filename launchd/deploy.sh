@@ -20,8 +20,14 @@ esac
 echo "→ npm install (production deps)"
 cd "$REPO" && npm install --omit=dev
 
-echo "→ ensure durable log dir"
+echo "→ ensure durable log dir + private service logs"
 mkdir -p "$DATA"
+# launchd appends to an existing file and keeps its mode. Make the service logs 0600
+# BEFORE the first load: an uncaught library error can print request URLs into them,
+# and a Telegram URL carries the bot token.
+for f in "$DATA/digest-service.log" "$DATA/digest-lark-service.log"; do
+  touch "$f" && chmod 600 "$f"
+done
 
 for LABEL in "${LABELS[@]}"; do
   PLIST_SRC="$REPO/launchd/$LABEL.plist"

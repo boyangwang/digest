@@ -31,7 +31,10 @@ async function main() {
 
   const stop = (sig) => {
     log.info(`${sig} — stopping`);
-    bot.stop();
+    // bot.stop() makes one last getUpdates call. If that fails, the rejection must
+    // not escape: unhandled, it crashed the process and grammY's error printed the
+    // full request URL - bot token included - into launchd's service log (2026-11-05).
+    bot.stop().catch((e) => log.warn(`stop: ${e?.message || e}`));
   };
   process.once("SIGINT", () => stop("SIGINT"));
   process.once("SIGTERM", () => stop("SIGTERM"));

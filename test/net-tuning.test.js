@@ -27,3 +27,8 @@ for (const entry of ["src/index.js", "src/lark-index.js", "scripts/retranscribe.
     assert.match(String(firstImport), /net-tuning\.js$/, `${entry}: first import is ${firstImport}`);
   });
 }
+
+test("SIGTERM handling never lets bot.stop() reject unhandled (it leaked the token once)", () => {
+  const src = readFileSync(new URL("src/index.js", root), "utf8");
+  assert.match(src, /bot\.stop\(\)\.catch\(/);
+});
