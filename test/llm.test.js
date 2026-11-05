@@ -6,7 +6,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-process.env.TENCENT_TOKENHUB_API_KEY = "th-test-key";
+// One configured provider (the default, OpenAI): these are tests of the LADDER,
+// provider-agnostic. Rotation across providers lives in llm-providers.test.js.
+process.env.OPENAI_API_KEY = "oa-test-key";
+process.env.TENCENT_TOKENHUB_API_KEY = "";
+delete process.env.DIGEST_LLM_PROVIDERS;
 
 const { generateTitleAndTags, classifyTitleError, LlmUnparseableError } = await import("../src/llm.js");
 const { LLM_MAX_ATTEMPTS, LLM_ATTEMPT_TIMEOUT_MS, LLM_TOTAL_BUDGET_MS } = await import("../src/config.js");
@@ -122,8 +126,10 @@ test("classifyTitleError: only 429/5xx/network/unparseable retry", () => {
   assert.equal(classifyTitleError(httpError(502)).action, "retry");
   assert.equal(classifyTitleError(new LlmUnparseableError("junk")).action, "retry");
   assert.equal(classifyTitleError(Object.assign(new Error("ECONNRESET"), { name: "TypeError" })).action, "retry");
+  // Terminal FOR THIS PROVIDER: it is dropped, and with one provider the ladder ends
+  // (see "400 / 401 / 403 are terminal" above); with several, the next one is tried.
   for (const s of [400, 401, 403, 404]) {
-    assert.equal(classifyTitleError(httpError(s)).action, "stop", `HTTP ${s} must be terminal`);
+    assert.equal(classifyTitleError(httpError(s)).action, "drop-vendor", `HTTP ${s} must not be retried`);
   }
 });
 

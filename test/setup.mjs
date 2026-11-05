@@ -12,3 +12,11 @@ import { join } from "node:path";
 if (!process.env.DIGEST_LOG_PATH) {
   process.env.DIGEST_LOG_PATH = join(mkdtempSync(join(tmpdir(), "digest-test-log-")), "digest.log");
 }
+
+// No test may reach a paid vendor with a REAL key. A test that needs a key sets a fake
+// one itself; anything inherited from the environment (a run under `secret-run`, a
+// shell that exported a key) is cleared here, so a test that forgets to stub its
+// transport fails offline instead of spending money.
+for (const k of ["OPENAI_API_KEY", "ELEVENLABS_API_KEY", "TENCENT_TOKENHUB_API_KEY"]) {
+  process.env[k] = "";
+}

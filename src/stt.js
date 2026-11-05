@@ -33,7 +33,7 @@ import {
   STT_TOTAL_BUDGET_MS,
 } from "./config.js";
 import { resolveProviders, SttHttpError, SttEmptyError } from "./stt-providers.js";
-import { runWithRetry, backoffMs as ladderBackoffMs, truncate } from "./retry.js";
+import { runWithRetry, backoffMs as ladderBackoffMs, truncate, isOutOfCredit } from "./retry.js";
 import { log } from "./log.js";
 
 /** Failure reasons. Persisted into the block, so treat them as a stable contract. */
@@ -59,6 +59,8 @@ export function classify(err) {
   if (err instanceof SttEmptyError) return { action: "stop", reason: STT_FAIL.EMPTY };
   if (err instanceof SttHttpError) {
     const s = err.status;
+    // A 429 that means "no money left" is about our account, not load: drop the vendor.
+    if (s === 429 && isOutOfCredit(err)) return { action: "drop-vendor", reason: STT_FAIL.REJECTED };
     if (s === 429 || s >= 500) return { action: "retry" }; // rate limit / vendor-side fault
     // The request or the audio is bad — same answer from anyone.
     if (s === 400 || s === 413 || s === 415 || s === 422)

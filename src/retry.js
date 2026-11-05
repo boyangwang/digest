@@ -14,6 +14,19 @@ import { log } from "./log.js";
 export const truncate = (s, n = 300) => String(s ?? "").replace(/\s+/g, " ").slice(0, n);
 
 /**
+ * True when a vendor refused because the ACCOUNT has no money left. OpenAI says so with
+ * a 429 whose type is `insufficient_quota` (code `insufficient_quota`, or since 2026
+ * `credit_balance_exhausted`). By status alone it looks like a rate limit, but waiting
+ * never fixes it, so callers drop the vendor instead of retrying it.
+ * Reads SDK errors (code/type/error.*) and raw-HTTP errors (a `body` string) alike.
+ */
+const NO_CREDIT = /insufficient_quota|credit_balance_exhausted/;
+export function isOutOfCredit(err) {
+  const fields = [err?.code, err?.type, err?.error?.code, err?.error?.type, err?.body];
+  return fields.some((f) => typeof f === "string" && NO_CREDIT.test(f));
+}
+
+/**
  * An error's message plus its `.cause` chain. Node's fetch reports every network
  * failure as the bare "fetch failed" and hides the real reason (ECONNRESET, a
  * connect timeout, a TLS error) one or two `.cause` levels down - which is exactly

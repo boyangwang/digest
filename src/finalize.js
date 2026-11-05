@@ -8,7 +8,7 @@ import { generateTitleAndTags } from "./llm.js";
 import { compileNote } from "./compile.js";
 import { log } from "./log.js";
 
-/** Build the text fed to glm-5.2: substance in arrival order (text, speech, image captions, files). */
+/** Build the text fed to the title model: substance in arrival order (text, speech, image captions, files). */
 export function buildLLMInput(blocks) {
   const lines = [];
   for (const b of blocks) {
