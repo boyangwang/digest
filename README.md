@@ -1,6 +1,6 @@
-# Digest 🌱 (v1.2)
+# Digest 🌱 (v1.3)
 
-A Telegram bot that turns whatever you send it — text, voice, photos, files, in any
+A Telegram **and Lark** bot ("Sleep Digest" on both) that turns whatever you send it — text, voice, photos, files, in any
 order — into **one bilingual Markdown note** in your Obsidian vault, with an
 LLM-generated title and tags. "Dear diary", multimodal.
 
@@ -11,7 +11,13 @@ LLM-generated title and tags. "Dear diary", multimodal.
 
 1. Send anything — the bot auto-starts a digest (no `/start`). Each input gets **two
    replies**: an instant ACK (after it's durably saved) and a "processed" message.
-2. Voice → transcribed with the **original audio kept** and embedded. Transcription
+2. **Every voice note / photo / file is ACKed the moment it arrives**, before anything can
+   fail, then downloaded and processed in the background. Downloads and transcription each get
+   **3-minute attempts with automatic retries**; every retry is announced in the chat, a long
+   job says "still working" once, and if the ladder gives up you get an explicit **"Sorry, it
+   failed" with the reason and a 🔁 Retry button**. Never silence. A restart resumes unfinished
+   jobs.
+   Voice → transcribed with the **original audio kept** and embedded. Transcription
    retries across two vendors (ElevenLabs Scribe v2 → OpenAI) so a transient vendor
    failure doesn't lose the words; if it still fails, the audio is saved anyway and the
    note carries a retryable marker (see **Recovering a failed transcript** below).
@@ -30,9 +36,17 @@ LLM-generated title and tags. "Dear diary", multimodal.
 
 | file | role |
 |---|---|
-| `index.js` | entry — long polling |
-| `bot.js` | grammY handlers; `/done` + inline button; per-chat serial queue |
-| `ingest.js` | one input: persist → ACK → process (STT/vision) → processed |
+| `net-tuning.js` | FIRST import everywhere: widens Node's 250ms connect window (the "fetch failed" root cause) |
+| `index.js` | Telegram entry — long polling, resumes unfinished jobs |
+| `bot.js` | Telegram adapter (grammY): handlers, Done/Retry buttons, chunked sends |
+| `telegram-api.js` | Telegram file download (getFile + bytes) as a media fetcher |
+| `lark-index.js` | Lark entry — SDK long connection (`network.deardiary.digest-lark`) |
+| `lark.js` | Lark adapter: REST (token/send/download), message parsing, cards, allowlist |
+| `ingest.js` | one input: persist (bytes or reference) → ACK → start the job |
+| `jobs.js` | after the ACK: download → transcribe/caption → report; resume; Retry |
+| `media.js` | download retry ladder, error classes, magic-byte sniffing |
+| `commands.js` | `/done` (waits outside the queue) shared by both platforms |
+| `send.js` | outbound sends with retry; text chunking |
 | `transcriptions.js` | in-flight transcriptions per chat; what `/done` waits on |
 | `retry.js` | the shared attempt ladder (attempts, rotation, backoff, budget) |
 | `provenance.js` | the `GENERATOR生成器` stamp: who created a note, and may we edit it |
@@ -54,14 +68,18 @@ LLM-generated title and tags. "Dear diary", multimodal.
 npm install
 npm test                                   # unit + offline E2E
 secret-run node src/index.js               # run locally (injects vault keys)
-bash launchd/deploy.sh                      # install + start launchd service
+bash launchd/deploy.sh                      # install + start BOTH launchd services
 tail -f ~/.local/share/digest/digest.log           # app log (rotated, 0600) — the one to read
 tail -f ~/.local/share/digest/digest-service.log  # launchd's net for anything that escaped the logger
 ```
 
 - **Output:** `~/Documents/NotesVault/Heresy-Anthology/digest/` (Obsidian-synced);
   attachments in `ATTACHMENTS/`.
-- **Secrets (sops vault):** `DIGEST_BOT_TOKEN`, `ELEVENLABS_API_KEY`, `OPENAI_API_KEY`, `TENCENT_TOKENHUB_API_KEY`.
+- **Secrets (sops vault):** `DIGEST_BOT_TOKEN`, `ELEVENLABS_API_KEY`, `OPENAI_API_KEY`, `TENCENT_TOKENHUB_API_KEY`,
+  `DIGEST_LARK_APP_ID`, `DIGEST_LARK_APP_SECRET`.
+- **Lark:** app "Sleep Digest" (`cli_aa662277abb8df05`), long-connection events
+  (`im.message.receive_v1`) + callback (`card.action.trigger`). Service
+  `network.deardiary.digest-lark`, log `digest-lark.log` (net: `digest-lark-service.log`).
 - **Service:** launchd `network.deardiary.digest`. It writes **two** files, one writer each:
   `digest.log` is the app's own (rotated, mode 0600, holds the detail); `digest-service.log` is
   launchd's capture of stdout/stderr, which exists to catch whatever never reaches the logger —

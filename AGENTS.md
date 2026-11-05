@@ -1,19 +1,31 @@
-# AGENTS.md — Digest (v1.2)
+# AGENTS.md — Digest (v1.3: Telegram + Lark)
 
 `CLAUDE.md` is a symlink to this file - edit this one.
 
-## 📍 Status + Next Steps · (updated 2026-08-21)
-- **Working on:** Digest v1.2 — DONE. Multimodal Telegram capture → one bilingual Obsidian note.
-  v1.2.1 adds transcription durability (retry + vendor rotation + durable log + recovery script).
-- **Status:** ✅ Shipped. `npm test` green (count deliberately not pinned here - it drifts); all 3 live APIs verified; Boyang UAT passed ("pretty good"); deployed to launchd `network.deardiary.digest`; pushed to `origin/main`.
-- **Done recently:** JS rewrite; reusable title prompt from 552 vault titles; UAT fixes (serial# on every msg, ACK+Done button, IM inline timestamps, always-`TITLE标题`); deploy.
-- **Known blockers:** Obsidian **must stay running on the mini** for Sync to propagate notes to phone (it's a server; Sync only runs while the app is open) — offered to add a keep-alive, pending Boyang's call. Vision caption ~15s/image (acceptable).
-- **Next step:** captain must `bash launchd/deploy.sh` (or reload `network.deardiary.digest`).
-  The plist now carries TWO changes needing that reload: the durable log path AND the split of
-  launchd's stdout/stderr onto `digest-service.log`. A plist edit alone does nothing to a
-  running service; until it is reloaded, launchd still writes to the OLD `/tmp/digest.log`.
+## 📍 Status + Next Steps · (updated 2026-11-05)
+- **Working on:** v1.3 - voice durability (ACK-first, 3-minute retry ladder, never silent) +
+  the **Lark transport** ("Sleep Digest" app). Branch `feat/lark-and-voice-durability`.
+- **Status:** ✅ implemented, `npm test` green, E2E-verified on live Telegram + live Lark, and
+  **deployed from the branch checkout** (both launchd services). Not merged to `main` yet:
+  awaiting Boyang's OK (PR open).
+- **Done recently:** root cause of the silent voice notes found and fixed (Node's 250ms Happy
+  Eyeballs window, decision 15); media now ACKed before any network call (decision 16);
+  Lark bot created, configured, published, deployed (decisions 18-20).
+- **Known blockers:** **TokenHub key is dead** (401 since 2026-09-13; both vault keys,
+  incl. `_EMAILTRIAGE`): every title since then is the "spoken ..." fallback and image captions
+  fail. Needs a new key from the Tencent console (Boyang), then `secret-put
+  TENCENT_TOKENHUB_API_KEY` + `bash launchd/deploy.sh`. Obsidian must stay running on the Mini
+  for Sync.
+- **Next step:** Boyang: send one real voice note on Lark and one on Telegram; approve → merge
+  the PR to `main` (the services keep running from this checkout either way).
 
 ### Log (newest first)
+- 2026-11-05 — v1.3: voice notes that "just gave up" traced to `fetch failed` x7 in the log
+  (2026-09-24..10-29) = Happy Eyeballs connect timeouts; fixed (net-tuning) and the pipeline
+  rebuilt ACK-first with download/STT retry ladders, retry notices, Retry button, restart
+  resume. Lark transport added; Sleep Digest app `cli_aa662277abb8df05` created + published
+  (v1.0.0, v1.0.1 adds the card callback). Live E2E: Telegram 112s voice (download 3.8s, STT
+  4.4s), Lark text / image / audio / Retry / Done. 148 tests.
 - 2026-08-21 — v1.2.1 review round: transcription moved off the per-chat queue (+ per-chat
   manifest lock, bounded `/done` wait), attempt timeout back to 60s (budget 390s) and now
   covering the response body, `retranscribe` regenerates title/tags and gained `--rename`,
@@ -39,7 +51,8 @@
    order; holding the queue for the retry budget would only stall the next message. `/done`
    waits on the in-flight set, bounded by `STT_TOTAL_BUDGET_MS`, then compiles anyway with the
    retryable marker. Manifest read-modify-writes take a per-chat lock in `store.js` because the
-   queue no longer serializes them.
+   queue no longer serializes them. *(2026-11-05: `/done` now waits OUTSIDE the queue, bounded by
+   `JOB_TOTAL_BUDGET_MS`; see 17.)*
 9. `npm run retranscribe` **regenerates `TITLE标题` + tags** after a successful recovery (they
    were generated once at `/done` from `(no transcript)`), preserving `CREATEDAT` verbatim. The
    filename is deliberately NOT renamed by default — a filesystem rename breaks Obsidian links;
@@ -65,13 +78,41 @@
    "never roll back the transcript" rule.)
 14. `generateTitleAndTags` runs on the SAME ladder as STT (`src/retry.js`, `LLM_*` knobs in
    `config.js`). It sits on the recovery critical path, so a single blip must not cost a run.
+15. **`src/net-tuning.js` is the FIRST import of every entry point.** Node >=20 gives each
+   address 250ms to connect (Happy Eyeballs); the Mini has no IPv6 route and ~240-300ms RTT to
+   api.telegram.org, so fresh connections died as `fetch failed`. Measured: 250ms -> 0-6/20
+   succeed, 3000ms -> 20/20 (`scripts/probe-telegram-connect.mjs`). nodejs/node#54359.
+16. **Media is stored by REFERENCE and ACKed before any network call** (Telegram `file_id`,
+   Lark `message_id`+`file_key`). Download and processing run off the queue in `src/jobs.js`.
+   Supersedes "ACK only after the bytes are persisted" for media: the reference is the durable
+   thing, and Boyang asked for the ACK first.
+17. **Attempt timeouts are 3 minutes** (STT and download; Boyang's ruling 2026-11-05, was 60s).
+   Every retry is announced in chat, a long job says "still working" once, and a give-up is an
+   explicit apology with a 🔁 Retry button. `block.job` state makes jobs resumable on restart.
+   `/done` waits for in-flight jobs OUTSIDE the queue (`src/commands.js`), so new messages are
+   still ACKed meanwhile.
+18. **Lark runs as a separate launchd service** (`network.deardiary.digest-lark`,
+   `src/lark-index.js`) over the SDK long connection: a fault in one transport never stops
+   the other, and each process owns its own log file. Lark chats are `lark_<chat_id>` in the
+   shared pending store; notes land in the same vault folder.
+19. **Lark REST is plain fetch** (`src/lark.js`), the SDK is used only for the WS client +
+   dispatcher - timeouts/retries stay ours and tests inject `fetchImpl`. Allowlist =
+   Boyang's open_id **for this app** (`BOYANG_LARK_OPEN_ID`; open_ids are per-app); the app's
+   availability is also limited to him. Lark re-keys a file when it is sent: always use the
+   `file_key` inside the received message.
+20. Sleep Digest app: `cli_aa662277abb8df05` (tenant Brain Computer Interface), created via
+   the `lark-cli config init --new` page, events/callbacks in long-connection mode
+   (`im.message.receive_v1`, `card.action.trigger`). Credentials in the vault as
+   `DIGEST_LARK_APP_ID` / `DIGEST_LARK_APP_SECRET`. Console automation helpers:
+   `scripts/lark-console/`.
 
 ## What this is
 Telegram bot: send text/voice/photos/files in any order → tap ✅ Done / `/done` → one bilingual
 Markdown note in the Obsidian vault. See `README.md` and `specs/prd-digest-v1.2.md`.
 
 ## Stack
-Node ≥22 (ESM), grammY, `openai` client → Tencent TokenHub, `yaml`. STT = ElevenLabs Scribe v2
+Node ≥22 (ESM), grammY (Telegram), `@larksuiteoapi/node-sdk` (Lark long connection only),
+`openai` client → Tencent TokenHub, `yaml`. STT = ElevenLabs Scribe v2
 → OpenAI `gpt-4o-transcribe` (plain `fetch`/`FormData`, no SDK).
 Tests: `node --test` via `npm test`, which loads `test/setup.mjs` with `--import` to pin
 `DIGEST_LOG_PATH` at a temp dir — otherwise the suite appends to the live app log.
@@ -80,7 +121,8 @@ Tests: `node --test` via `npm test`, which loads `test/setup.mjs` with `--import
 ```bash
 npm test                          # unit + offline E2E
 secret-run node src/index.js      # run locally (vault keys injected)
-bash launchd/deploy.sh            # deploy launchd network.deardiary.digest
+bash launchd/deploy.sh            # deploy BOTH services (or: deploy.sh telegram | lark)
+node scripts/probe-telegram-connect.mjs 3000   # can this box open fresh connections to Telegram?
 tail -f ~/.local/share/digest/digest.log           # the APP's log: rotated, 0600, the one to read
 tail -f ~/.local/share/digest/digest-service.log  # launchd's net; NON-EMPTY = something escaped the logger
 #   NEVER /tmp — macOS purges it under the running service.
@@ -129,7 +171,14 @@ secret-run npm run retranscribe -- --all             # recover any failed transc
 - **The STT attempt timeout must cover the response BODY, not just the headers** — `fetch()`
   resolves on headers, so an abort timer cleared there lets a stalled body outlive the budget.
 - Output vault: `~/Documents/NotesVault/Heresy-Anthology/digest/` (+ `ATTACHMENTS/`).
-- Secrets: `DIGEST_BOT_TOKEN`, `ELEVENLABS_API_KEY`, `OPENAI_API_KEY`, `TENCENT_TOKENHUB_API_KEY` (sops vault).
+- Secrets: `DIGEST_BOT_TOKEN`, `ELEVENLABS_API_KEY`, `OPENAI_API_KEY`, `TENCENT_TOKENHUB_API_KEY`,
+  `DIGEST_LARK_APP_ID`, `DIGEST_LARK_APP_SECRET` (sops vault).
+- **Platform code stays in the adapters** (`src/bot.js` Telegram, `src/lark.js` Lark). The
+  core (`ingest` / `jobs` / `commands` / `finalize`) only sees `reply(text, {done, retry,
+  html})` and `fetchMedia(source)`. A new platform = a new adapter + entry point.
+- **Never fail silently.** Every path that can drop an input ends in a chat message; sends go
+  through `sendWithRetry` (`src/send.js`). A test that feeds a real update through the adapter
+  (`test/telegram-voice-e2e.test.js`) pins it.
 
 ## The title voice
 `prompts/title-and-tags.md` — authored from Boyang's 552 real note titles. It IS the reusable

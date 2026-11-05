@@ -13,6 +13,7 @@ import {
   OPENAI_STT_MODEL,
   OPENAI_API_KEY,
 } from "./config.js";
+import { errorDetail } from "./retry.js";
 
 /** Vendor answered, but with an HTTP error. `status` decides retryability. */
 export class SttHttpError extends Error {
@@ -41,7 +42,7 @@ export class SttEmptyError extends Error {
 /** Vendor could not be reached / did not answer in time. Always retryable. */
 export class SttTransportError extends Error {
   constructor(provider, cause) {
-    super(`${provider} transport: ${cause?.message || cause}`);
+    super(`${provider} transport: ${errorDetail(cause)}`);
     this.name = "SttTransportError";
     this.provider = provider;
     this.cause = cause;

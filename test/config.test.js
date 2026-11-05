@@ -89,9 +89,47 @@ test("the retry budget still covers the documented worst case", () => {
   const perAttempt = Number(defaultConfigValue("STT_ATTEMPT_TIMEOUT_MS"));
   const budget = Number(defaultConfigValue("STT_TOTAL_BUDGET_MS"));
   const worstCaseSleep = (1000 + 2000 + 4000 + 8000 + 8000) * 1.25;
-  assert.equal(perAttempt, 60000, "the captain ruled 60s per attempt, not 45s");
+  // 2026-11-05: "It shouldn't timeout that quickly ... timeout in maybe three minutes".
+  assert.equal(perAttempt, 180000, "the captain ruled 3 minutes per attempt (was 60s)");
   assert.ok(
     attempts * perAttempt + worstCaseSleep <= budget,
     `budget ${budget}ms cannot cover ${attempts} x ${perAttempt}ms + ${worstCaseSleep}ms of backoff`
   );
+});
+
+test("the download ladder gets the same 3-minute attempts, and its budget covers the worst case", () => {
+  const attempts = Number(defaultConfigValue("DOWNLOAD_MAX_ATTEMPTS"));
+  const perAttempt = Number(defaultConfigValue("DOWNLOAD_ATTEMPT_TIMEOUT_MS"));
+  const budget = Number(defaultConfigValue("DOWNLOAD_TOTAL_BUDGET_MS"));
+  const base = Number(defaultConfigValue("DOWNLOAD_BACKOFF_BASE_MS"));
+  const max = Number(defaultConfigValue("DOWNLOAD_BACKOFF_MAX_MS"));
+  assert.equal(perAttempt, 180000);
+  assert.ok(attempts >= 3, "a few attempts, not one");
+  let sleep = 0;
+  for (let n = 1; n < attempts; n++) sleep += Math.min(base * 2 ** (n - 1), max) * 1.25;
+  assert.ok(attempts * perAttempt + sleep <= budget, `download budget ${budget}ms too small`);
+});
+
+test("/done's wait covers a whole job: download budget + STT budget", () => {
+  const job = Number(defaultConfigValue("JOB_TOTAL_BUDGET_MS"));
+  const dl = Number(defaultConfigValue("DOWNLOAD_TOTAL_BUDGET_MS"));
+  const stt = Number(defaultConfigValue("STT_TOTAL_BUDGET_MS"));
+  assert.ok(job >= dl + stt, `JOB_TOTAL_BUDGET_MS ${job} < ${dl} + ${stt}`);
+});
+
+test("the Lark service never shares a log file with the app or with the Telegram service", async () => {
+  const { readFileSync } = await import("node:fs");
+  const plist = readFileSync(new URL("../launchd/network.deardiary.digest-lark.plist", import.meta.url), "utf8");
+  const read = (key) => plist.match(new RegExp(`<key>${key}</key>\\s*<string>([^<]*)</string>`))?.[1];
+  const appLog = read("DIGEST_LOG_PATH");
+  const out = read("StandardOutPath");
+  const err = read("StandardErrorPath");
+  assert.ok(appLog && appLog.endsWith("/digest-lark.log"), `Lark app log must be its own file, got ${appLog}`);
+  assert.equal(out, err);
+  assert.ok(out.endsWith("/digest-lark-service.log"), `Lark service log must be its own file, got ${out}`);
+  assert.notEqual(out, appLog);
+  const tg = await plistStdioPaths();
+  assert.notEqual(out, tg.out, "the two launchd services must not share a service log");
+  assert.ok(!appLog.endsWith("/digest.log"), "the Lark process must not write the Telegram process's app log");
+  assert.ok(plist.includes("src/lark-index.js"));
 });

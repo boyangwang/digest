@@ -35,11 +35,30 @@ export function transcriptFailureMarker(block) {
 }
 
 /**
+ * Marker for a media block whose bytes never reached us (the platform download failed,
+ * or was still running when the note was compiled). Deliberately NOT the
+ * "[Transcription unavailable" marker: there is no audio on disk, so the recovery
+ * script must never consider it eligible. The chat already told the user to resend.
+ */
+export function downloadFailureMarker(block) {
+  const what = { voice: "Voice message", image: "Image", file: "File" }[block.type] || "Attachment";
+  const f = block.downloadFailure;
+  if (!f) return `[${what} not downloaded yet when this note was compiled]`;
+  const attempts = f.attempts ? `, ${f.attempts} attempt${f.attempts === 1 ? "" : "s"}` : "";
+  return `[${what} could not be downloaded (${f.reason}${attempts})${block.origName ? `: ${block.origName}` : ""}]`;
+}
+
+/**
  * Render one block, IM-style: an inline `**MM-DD HH:MM**` timestamp on the SAME line
  * as the content (never a lone header line).
  */
 function renderBlock(block) {
   const ts = `**${stampChatTime(new Date(block.ts))}**`;
+  if (block.type !== "text" && !block.attachment) {
+    let out = `${ts} ${downloadFailureMarker(block)}`;
+    if (block.userCaption && block.userCaption.trim()) out += `\n${block.userCaption.trim()}`;
+    return out;
+  }
   switch (block.type) {
     case "text":
       return `${ts} ${String(block.text ?? "").trim()}`;
