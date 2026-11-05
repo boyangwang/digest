@@ -29,7 +29,8 @@ export const PENDING_DIR = join(DATA_DIR, "pending");
 //   openai   - the default since 2026-11-06. Key: OPENAI_API_KEY, which the sops
 //              store already ships for the STT fallback below. gpt-5.4-mini is
 //              current-gen, vision-capable and cheap ($0.75 in / $4.50 out per 1M
-//              tokens, developers.openai.com/api/docs/pricing): a title is ~1-2 cents.
+//              tokens, developers.openai.com/api/docs/pricing). Measured 2026-11-06: a title
+//              ~$0.005, an image caption ~$0.001.
 //   tokenhub - Tencent TokenHub, glm-5.2 + glm-5v-turbo. Both vault keys have
 //              returned 401 since 2026-09-13; kept so it can come back by env alone:
 //              DIGEST_LLM_PROVIDERS=openai,tokenhub

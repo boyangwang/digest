@@ -353,6 +353,19 @@ test("the audio MIME follows the file extension when the caller has none", async
   assert.equal(h3.calls[0].form.get("file").type, "audio/mp4");
 });
 
+test("openai gets an .opus file under an .ogg name - it rejects the .opus extension", async () => {
+  // Measured 2026-11-06: gpt-4o-transcribe answers 400 "Unsupported file format opus"
+  // for e2e-voice.opus, and transcribes the very same Ogg-Opus bytes named .ogg. A 400
+  // is TERMINAL for the whole ladder, so one bad filename would also cancel ElevenLabs.
+  const opus = join(base, "note.opus");
+  writeFileSync(opus, Buffer.from("OggS-fake-opus-bytes"));
+  const h = harness([ok("from opus")], { providerOrder: ["openai"] });
+  await transcribe(opus, h.opts);
+  const file = h.calls[0].form.get("file");
+  assert.equal(file.name, "note.ogg");
+  assert.equal(file.type, "audio/ogg");
+});
+
 test("unreadable audio fails fast without calling any vendor", async () => {
   const h = harness([ok("never called")]);
   const r = await transcribe(join(base, "does-not-exist.ogg"), h.opts);

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // llm-smoke.mjs - LIVE check of the title + caption LLM, through the real src/llm.js
-// code path and the real provider config. Spends a little money (about 1-2 cents per
+// code path and the real provider config. Spends a little money (under 1 cent per
 // run on gpt-5.4-mini). Writes nothing: notes and images are only read.
 //
 //   secret-run node scripts/llm-smoke.mjs [note.md] [image.png|jpg]

@@ -134,12 +134,21 @@ const elevenlabs = {
   },
 };
 
+/**
+ * gpt-4o-transcribe judges the format by the file NAME. It rejects ".opus" with a 400
+ * ("Unsupported file format opus", measured 2026-11-06) yet accepts the same Ogg-Opus
+ * bytes named ".ogg"; its documented list is flac mp3 mp4 mpeg mpga m4a ogg wav webm.
+ */
+export function openaiUploadName(filename) {
+  return String(filename || "audio.ogg").replace(/\.(opus|oga)$/i, ".ogg");
+}
+
 const openai = {
   name: "openai",
   isConfigured: () => Boolean(OPENAI_API_KEY),
   async request(audio, { timeoutMs, fetchImpl }) {
     const form = new FormData();
-    form.append("file", audioBlob(audio), audio.filename);
+    form.append("file", audioBlob(audio), openaiUploadName(audio.filename));
     form.append("model", OPENAI_STT_MODEL);
     const data = await postForm(this.name, {
       url: OPENAI_STT_API_URL,

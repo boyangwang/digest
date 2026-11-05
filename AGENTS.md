@@ -11,11 +11,9 @@
 - **Done recently:** root cause of the silent voice notes found and fixed (Node's 250ms Happy
   Eyeballs window, decision 15); media now ACKed before any network call (decision 16);
   Lark bot created, configured, published, deployed (decisions 18-20).
-- **Known blockers:** titles + captions moved from dead TokenHub to **OpenAI** (decision 21),
-  but the vault's `OPENAI_API_KEY` has **no credits** (429 `credit_balance_exhausted`, checked
-  2026-11-06) - which also means the STT fallback has been dead. Needs a funded key:
-  `pbpaste | secret-put OPENAI_API_KEY`, redeploy, then `secret-run node scripts/llm-smoke.mjs`
-  must print SMOKE OK. Obsidian must stay running on the Mini for Sync.
+- **Known blockers:** none. Obsidian must stay running on the Mini for Sync. The 11 notes
+  titled by the fallback while TokenHub was dead (2026-09-13..11-06, "spoken ..." in the
+  filename) still carry those titles.
 - **Next step:** Boyang: send one real voice note on Lark and one on Telegram; approve → merge
   the PR to `main` (the services keep running from this checkout either way).
 
@@ -24,6 +22,10 @@
   2026-09-13; 11 notes got "spoken ..." fallback titles) to OpenAI `gpt-5.4-mini` (decision
   21). Live smoke test exposed that the vault OpenAI key has no credit; a no-credit 429 is now
   dropped after one call instead of retried (title and STT). New `scripts/llm-smoke.mjs`.
+  Boyang then put a funded key in the vault: smoke OK on a real note (title ~$0.005, caption
+  ~$0.001, measured from token usage) and the OpenAI STT fallback transcribes again. OpenAI
+  STT rejects a `.opus` file NAME (400, terminal for the whole ladder) but takes the same
+  bytes as `.ogg`, so uploads are renamed (`openaiUploadName`).
 - 2026-11-05 — v1.3: voice notes that "just gave up" traced to `fetch failed` x7 in the log
   (2026-09-24..10-29) = Happy Eyeballs connect timeouts; fixed (net-tuning) and the pipeline
   rebuilt ACK-first with download/STT retry ladders, retry notices, Retry button, restart
