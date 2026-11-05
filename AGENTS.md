@@ -13,7 +13,7 @@
   Lark bot created, configured, published, deployed (decisions 18-20).
 - **Known blockers:** none. Obsidian must stay running on the Mini for Sync. The 11 notes
   titled by the fallback while TokenHub was dead (2026-09-13..11-06, "spoken ..." in the
-  filename) still carry those titles.
+  filename) keep those titles: Boyang declined a retitle pass (2026-11-06), do not re-propose.
 - **Next step:** Boyang: send one real voice note on Lark and one on Telegram; approve → merge
   the PR to `main` (the services keep running from this checkout either way).
 
