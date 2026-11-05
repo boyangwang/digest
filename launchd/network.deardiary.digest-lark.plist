@@ -27,9 +27,6 @@
          would corrupt each other's rotation). -->
     <key>DIGEST_LOG_PATH</key>
     <string>/Users/claw/.local/share/digest/digest-lark.log</string>
-    <!-- Boyang's open_id as seen by the Sleep Digest app (open_ids are per-app). -->
-    <key>DIGEST_LARK_ALLOWED_OPEN_IDS</key>
-    <string>__BOYANG_SLEEP_DIGEST_OPEN_ID__</string>
   </dict>
 
   <key>WorkingDirectory</key>

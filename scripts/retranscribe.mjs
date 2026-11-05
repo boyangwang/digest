@@ -61,6 +61,7 @@
 //
 // It goes through the SAME src/stt.js retry+rotation loop the bot uses, so running
 // it is also a live check that the loop works.
+import "../src/net-tuning.js"; // FIRST: Happy Eyeballs 250ms trap, see that file
 import { promises as fs } from "node:fs";
 import { join, basename, isAbsolute } from "node:path";
 import { pathToFileURL } from "node:url";

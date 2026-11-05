@@ -168,7 +168,8 @@ const LARK_TEXT_MAX = 12000; // text messages cap at 150 KB; keep each one reada
 export function htmlToLarkMarkdown(html) {
   return String(html)
     .replace(/<b>([\s\S]*?)<\/b>/g, "**$1**")
-    .replace(/<code>([\s\S]*?)<\/code>/g, "`$1`")
+    // Lark's card-1.0 markdown prints backticks literally, so code spans become plain text.
+    .replace(/<code>([\s\S]*?)<\/code>/g, "$1")
     .replace(/<[^>]+>/g, "")
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")

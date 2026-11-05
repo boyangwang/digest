@@ -148,8 +148,9 @@ export const LARK_API_BASE = process.env.DIGEST_LARK_API_BASE || "https://open.l
  * APP (never reuse one from another app). The app's availability is also limited to
  * him in the admin console; this is the second gate, in code.
  */
+export const BOYANG_LARK_OPEN_ID = "ou_246d39567c71fec91eb699bdfde95754"; // only user in the app's scope
 export const LARK_ALLOWED_OPEN_IDS = new Set(
-  (process.env.DIGEST_LARK_ALLOWED_OPEN_IDS || "")
+  (process.env.DIGEST_LARK_ALLOWED_OPEN_IDS || BOYANG_LARK_OPEN_ID)
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean)

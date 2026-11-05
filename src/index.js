@@ -1,5 +1,6 @@
 // Entry point — start the Digest bot on Telegram (long polling).
 // The Lark transport is a separate process: src/lark-index.js.
+import "./net-tuning.js"; // FIRST: see the file - the root cause of "fetch failed"
 import { BOT_TOKEN } from "./config.js";
 import { buildBot, resumeTelegramJobs, isTelegramChat } from "./bot.js";
 import { listPendingChats } from "./store.js";

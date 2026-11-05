@@ -2,6 +2,7 @@
 // connection. A separate process from the Telegram bot (src/index.js): a fault in one
 // transport can never take the other down, and each has its own launchd label and
 // its own log file (one writer per log file - see src/log.js).
+import "./net-tuning.js"; // FIRST: see the file - the root cause of "fetch failed"
 import * as Lark from "@larksuiteoapi/node-sdk";
 import { LARK_APP_ID, LARK_APP_SECRET, LARK_ALLOWED_OPEN_IDS } from "./config.js";
 import { createLarkApi, createLarkHandlers } from "./lark.js";
@@ -39,6 +40,11 @@ async function main() {
     "im.message.receive_v1": (data) => {
       handlers.onMessage(data).catch((e) => log.error(`lark onMessage: ${e?.stack || e}`));
     },
+    // Subscribed by the app template; nothing to do, but registered so the SDK does
+    // not log "no handle" for every read receipt.
+    "im.message.message_read_v1": () => {},
+    "im.message.reaction.created_v1": () => {},
+    "im.message.reaction.deleted_v1": () => {},
     "card.action.trigger": (data) =>
       handlers.onCardAction(data).catch((e) => {
         log.error(`lark onCardAction: ${e?.stack || e}`);

@@ -171,7 +171,7 @@ test("cards: Done / Retry buttons and the SAVED markdown", () => {
     buildCard("sorry", { retry: 4 }).elements[1].actions.map((a) => a.value),
     [{ action: "digest_retry", seq: 4 }, { action: "digest_done" }]
   );
-  assert.equal(htmlToLarkMarkdown("<b>T &amp; Q</b>\n<code>a.md</code>"), "**T & Q**\n`a.md`");
+  assert.equal(htmlToLarkMarkdown("<b>T &amp; Q</b>\n<code>a.md</code>"), "**T & Q**\na.md");
 });
 
 // ---------------------------------------------------------------------------
@@ -206,7 +206,7 @@ test("text + long voice + Done button → ACK cards, transcript, SAVED, and the 
   await settle(CHAT);
   const saved = s.sent.find((x) => x.type === "interactive" && /SAVED/.test(textOf(x)));
   assert.ok(saved, "SAVED banner sent as a card");
-  const file = textOf(saved).match(/`([^`]+\.md)`/)[1];
+  const file = textOf(saved).match(/📄\s+(.+\.md)/)[1];
   const md = readFileSync(join(process.env.DIGEST_OUT_DIR, file), "utf8");
   assert.match(md, /今天的想法 today's thought/);
   assert.match(md, /> 飞书语音转写 lark voice transcript/);

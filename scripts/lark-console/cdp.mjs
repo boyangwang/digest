@@ -157,6 +157,49 @@ try {
     })()`;
     const { result } = await send("Runtime.evaluate", { expression: expr, returnByValue: true });
     console.log(result.value);
+  } else if (cmd === "upload") {
+    // Click (x=a3, y=a4) on something that opens a native file chooser, intercept the
+    // chooser, and hand it file a5. No OS dialog ever appears.
+    let chooser;
+    const opened = new Promise((res) => (chooser = res));
+    ws.addEventListener("message", (ev) => {
+      const m = JSON.parse(ev.data);
+      if (m.method === "Page.fileChooserOpened") chooser(m.params);
+    });
+    await send("Page.enable");
+    await send("DOM.enable");
+    await send("Page.setInterceptFileChooserDialog", { enabled: true });
+    // Optional pre-click in the SAME session (e.g. open a "+" menu first):
+    // PRECLICK="x,y" node cdp.mjs upload <port> <x> <y> <file>
+    const clickAt = async (x, y) => {
+      for (const type of ["mouseMoved", "mousePressed", "mouseReleased"]) {
+        await send("Input.dispatchMouseEvent", { type, x, y, button: "left", clickCount: 1 });
+        await sleep(60);
+      }
+    };
+    if (process.env.PRECLICK) {
+      const [px, py] = process.env.PRECLICK.split(",").map(Number);
+      await clickAt(px, py);
+      await sleep(1200);
+      // hover the target first so menus that open on hover stay open
+      await send("Input.dispatchMouseEvent", { type: "mouseMoved", x: Number(a3), y: Number(a4) });
+      await sleep(400);
+    }
+    await clickAt(Number(a3), Number(a4));
+    const p = await Promise.race([opened, sleep(8000).then(() => null)]);
+    if (!p) throw new Error("no file chooser opened");
+    await send("DOM.setFileInputFiles", { backendNodeId: p.backendNodeId, files: [a5] });
+    await send("Page.setInterceptFileChooserDialog", { enabled: false });
+    console.log(`uploaded ${a5} via chooser (mode ${p.mode})`);
+  } else if (cmd === "setfile") {
+    // DOM.setFileInputFiles on the Nth input[type=file] matching selector a3 (a5 = index).
+    await send("DOM.enable");
+    const { result } = await send("Runtime.evaluate", {
+      expression: `document.querySelectorAll(${JSON.stringify(a3)})[${Number(a5 || 0)}]`,
+    });
+    if (!result.objectId) throw new Error(`no element for ${a3}`);
+    await send("DOM.setFileInputFiles", { objectId: result.objectId, files: [a4] });
+    console.log(`setfile ${a4} -> ${a3}[${Number(a5 || 0)}]`);
   } else if (cmd === "type") {
     await send("Input.insertText", { text: a3 });
     console.log("typed");
